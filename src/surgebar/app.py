@@ -16,6 +16,7 @@ import rumps
 
 from . import config
 from .diagnose import call_claude, sanitize_actions
+from .process_naming import display_label, friendly_app_name
 from .signals import (
     CORE_COUNT,
     PROTECTED_PROCESSES,
@@ -373,8 +374,10 @@ class SurgebarApp(rumps.App):
             except psutil.NoSuchProcess:
                 rumps.alert(title="Already gone", message="That process has already exited.")
                 return
+            friendly = friendly_app_name(pid, process_name)
+            title_label = f"{friendly} — {process_name}" if friendly and friendly != process_name else process_name
             if rumps.alert(
-                title=f"Kill {process_name}?",
+                title=f"Kill {title_label}?",
                 message=(
                     f"PID {pid}  |  CPU {cpu_percent:.1f}%\n\n"
                     "This will forcefully terminate the process."
@@ -426,9 +429,9 @@ class SurgebarApp(rumps.App):
             if index < len(top_processes):
                 proc = top_processes[index]
                 self._top_process_pids[index] = proc["pid"]
-                name = (proc["name"] or "?")[:26]
+                label = display_label(proc["pid"], proc["name"] or "?")
                 cpu_for_proc = proc.get("cpu_percent") or 0.0
-                item.title = f"  {cpu_for_proc:5.1f}%  {name}"
+                item.title = f"  {cpu_for_proc:5.1f}%  {label}"
             else:
                 self._top_process_pids[index] = None
                 item.title = ""

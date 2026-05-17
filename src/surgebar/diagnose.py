@@ -17,12 +17,14 @@ Below is the current system state and the top processes by CPU%.
 
 Recommend 1-3 concrete actions to reduce the surge. Respond with ONLY a JSON array — no prose, no markdown fences.
 
+Each process in the snapshot includes an "app_name" field — the user-recognizable application name (e.g. "Cursor", "Slack", "Spotlight indexing"). Use the app_name when writing the label and rationale so the user knows what they're acting on, even if the process name is cryptic (e.g. "com.apple.WebKit.GPU.xpc").
+
 Each action object has these fields:
 - kind: "throttle" (renice to 19, slows it safely), "quit" (SIGTERM, graceful), "kill" (SIGKILL, last resort), or "info" (no action — just inform the user)
 - pid: integer process id (null for "info")
-- label: short menu label, max 60 chars, e.g. "Throttle Cursor Helper (PID 4823) — frees ~40% CPU"
+- label: short menu label, max 60 chars, prefer the app_name e.g. "Throttle Cursor — Helper (Renderer) — frees ~40% CPU"
 - risk: "safe" (clearly leaking helper / well-known runaway) or "confirm" (user-facing app, editor, browser)
-- rationale: 1-2 sentences explaining why this helps
+- rationale: 1-2 sentences explaining why this helps. Refer to the user-visible app, not the cryptic process name.
 
 Rules:
 - NEVER recommend killing/quitting/throttling protected system processes: kernel_task, launchd, WindowServer, loginwindow, Finder, Dock, SystemUIServer, coreaudiod, mDNSResponder, configd, syslogd, powerd, diskarbitrationd, Python/python3 (Python is the monitor itself).

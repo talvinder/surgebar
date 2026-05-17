@@ -72,20 +72,19 @@ surgebar --version    Print version
 
 ## Auto-start on login
 
-surgebar ships a launchd plist template at `scripts/com.talvinder.surgebar.plist`. To install:
+surgebar ships a launchd plist template at `scripts/com.surgebar.app.plist`. To install:
 
 ```bash
-# Replace path to your installed surgebar binary
 SURGEBAR_BIN=$(which surgebar)
-sed "s|__SURGEBAR_BIN__|$SURGEBAR_BIN|" scripts/com.talvinder.surgebar.plist \
-  > ~/Library/LaunchAgents/com.talvinder.surgebar.plist
-launchctl load ~/Library/LaunchAgents/com.talvinder.surgebar.plist
+sed "s|__SURGEBAR_BIN__|$SURGEBAR_BIN|" scripts/com.surgebar.app.plist \
+  > ~/Library/LaunchAgents/com.surgebar.app.plist
+launchctl load ~/Library/LaunchAgents/com.surgebar.app.plist
 ```
 
 To remove:
 ```bash
-launchctl unload ~/Library/LaunchAgents/com.talvinder.surgebar.plist
-rm ~/Library/LaunchAgents/com.talvinder.surgebar.plist
+launchctl unload ~/Library/LaunchAgents/com.surgebar.app.plist
+rm ~/Library/LaunchAgents/com.surgebar.app.plist
 ```
 
 ## How the AI triage works

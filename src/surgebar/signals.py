@@ -8,6 +8,8 @@ from typing import Any
 
 import psutil
 
+from .process_naming import friendly_app_name
+
 CORE_COUNT: int = psutil.cpu_count() or 1
 
 # System processes that surgebar will never offer to throttle/kill/quit.
@@ -49,6 +51,7 @@ def enrich_processes(processes: list[dict[str, Any]]) -> list[dict[str, Any]]:
             enriched.append({
                 "pid": p["pid"],
                 "name": p["name"],
+                "app_name": friendly_app_name(p["pid"], p["name"]),
                 "cpu_percent": round(p.get("cpu_percent") or 0.0, 1),
                 "memory_mb": round(memory_mb, 1),
                 "threads": threads,
