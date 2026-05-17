@@ -384,7 +384,7 @@ class SurgebarApp(rumps.App):
         subprocess.run(["open", str(config.CONFIG_DIR)], check=False)
 
     def _on_about_clicked(self, _: rumps.MenuItem) -> None:
-        from . import __version__
+        from . import ICON_PATH, __version__
         readme_url = "https://github.com/talvinder/surgebar#readme"
         result = rumps.alert(
             title=f"surgebar v{__version__}",
@@ -397,6 +397,7 @@ class SurgebarApp(rumps.App):
             ),
             ok="Open README",
             cancel="Close",
+            icon_path=str(ICON_PATH) if ICON_PATH.exists() else None,
         )
         if result == 1:
             subprocess.run(["open", readme_url], check=False)

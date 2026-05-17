@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- Background: dark navy → near-black gradient -->
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#1f2233"/>
+      <stop offset="100%" stop-color="#0c0e16"/>
+    </linearGradient>
+
+    <!-- Surge line: cool to hot gradient — calm → warning → critical -->
+    <linearGradient id="surge" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0%"   stop-color="#22c55e"/>
+      <stop offset="45%"  stop-color="#facc15"/>
+      <stop offset="70%"  stop-color="#f97316"/>
+      <stop offset="100%" stop-color="#ef4444"/>
+    </linearGradient>
+
+    <!-- Soft glow halo behind the surge line -->
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="14" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <!-- Stronger glow for the spike peak -->
+    <radialGradient id="peakGlow">
+      <stop offset="0%"   stop-color="#fca5a5" stop-opacity="0.9"/>
+      <stop offset="40%"  stop-color="#ef4444" stop-opacity="0.5"/>
+      <stop offset="100%" stop-color="#ef4444" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- Rounded squircle background -->
+  <rect width="1024" height="1024" rx="232" ry="232" fill="url(#bg)"/>
+
+  <!-- Subtle "menu bar" hint at the top: a thin pill suggesting the bar surgebar lives in -->
+  <rect x="312" y="168" width="400" height="10" rx="5" ry="5"
+        fill="#3a3f52" opacity="0.55"/>
+  <circle cx="332" cy="173" r="9" fill="#22c55e" opacity="0.85"/>
+
+  <!-- Glow halo behind the spike -->
+  <circle cx="540" cy="280" r="190" fill="url(#peakGlow)"/>
+
+  <!-- Surge waveform: flat → small ripple → flat → big spike → drop → flat -->
+  <path d="
+    M 110 700
+    L 270 700
+    L 320 660 L 370 700
+    L 480 700
+    L 540 240
+    L 600 700
+    L 730 700
+    L 760 660 L 790 700
+    L 914 700
+  " fill="none"
+     stroke="url(#surge)"
+     stroke-width="44"
+     stroke-linecap="round"
+     stroke-linejoin="round"
+     filter="url(#glow)"/>
+
+  <!-- Highlight dot at the very peak so the eye lands there -->
+  <circle cx="540" cy="240" r="22" fill="#fef2f2" opacity="0.95"/>
+  <circle cx="540" cy="240" r="10" fill="#ef4444"/>
+
+  <!-- Faint baseline tick marks under the waveform — evokes a graph axis -->
+  <g fill="#3a3f52" opacity="0.35">
+    <circle cx="200" cy="780" r="6"/>
+    <circle cx="320" cy="780" r="6"/>
+    <circle cx="440" cy="780" r="6"/>
+    <circle cx="560" cy="780" r="6"/>
+    <circle cx="680" cy="780" r="6"/>
+    <circle cx="800" cy="780" r="6"/>
+  </g>
+</svg>

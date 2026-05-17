@@ -1,9 +1,15 @@
-# surgebar
+<p align="center">
+  <img src="src/surgebar/assets/surgebar-256.png" alt="surgebar icon" width="128" height="128"/>
+</p>
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![Platform: macOS](https://img.shields.io/badge/platform-macOS-black.svg)](#)
-[![CI](https://github.com/talvinder/surgebar/actions/workflows/ci.yml/badge.svg)](https://github.com/talvinder/surgebar/actions/workflows/ci.yml)
+<h1 align="center">surgebar</h1>
+
+<p align="center">
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg"></a>
+  <a href="https://www.python.org/downloads/"><img alt="Python 3.11+" src="https://img.shields.io/badge/python-3.11+-blue.svg"></a>
+  <img alt="Platform: macOS" src="https://img.shields.io/badge/platform-macOS-black.svg">
+  <a href="https://github.com/talvinder/surgebar/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/talvinder/surgebar/actions/workflows/ci.yml/badge.svg"></a>
+</p>
 
 > Menu bar CPU surge alerts with one-click LLM-powered triage.
 
