@@ -23,9 +23,15 @@ surgebar lives in your macOS menu bar. It watches your CPU and load average, fir
 🔴 91%  L:8.1    ← notification fires, Claude triages
 ```
 
-## Why
+## Why I built this
 
-Activity Monitor tells you what's hot but not what to do. surgebar tells you the runaway process is `Cursor Helper (Renderer)`, suggests you renice it to 19, and does it in one click. You don't have to remember `kill -9`, `renice`, or which PID to trust.
+I work on an M3 Pro with 18GB of RAM — not exactly a slow machine. But the moment I'd open a few Claude Code sessions, spawn some subagents, and start vibe-coding across two or three projects, the fans would spin up and the whole machine would start choking. Every time.
+
+The frustrating part was figuring out *what* was choking it. The culprit was almost never the LLM session itself. It was a stray `node` process from a dev server I'd forgotten to kill, or an MCP server stuck in a loop, or a Vite watcher fighting another Vite watcher. Activity Monitor showed me a 400% CPU process called `node` with PID 81243 and a 200-char cmdline I couldn't parse at a glance.
+
+What I actually did, every time: I'd ask the Claude session itself — "find the process eating my CPU, tell me what it is, kill it." Claude would run `ps`, summarize, recommend, I'd hit yes.
+
+surgebar is just that loop, automated. It watches your CPU, notices the surge before the fans do, sends the top processes to an LLM, gets back a triage plan, and lets you act in one click. Activity Monitor shows you what's hot. surgebar tells you what to do about it.
 
 ## Features
 
