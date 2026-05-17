@@ -385,13 +385,21 @@ class SurgebarApp(rumps.App):
 
     def _on_about_clicked(self, _: rumps.MenuItem) -> None:
         from . import __version__
-        rumps.alert(
+        readme_url = "https://github.com/talvinder/surgebar#readme"
+        result = rumps.alert(
             title=f"surgebar v{__version__}",
             message=(
-                "Menu bar CPU surge alerts with AI triage.\n\n"
-                "github.com/talvinder/surgebar"
+                "Menu bar CPU surge alerts with one-click LLM-powered triage.\n\n"
+                "Supports Anthropic, OpenAI, Groq, OpenRouter, Together, Mistral,\n"
+                "Ollama, LM Studio, and any other Anthropic- or OpenAI-compatible\n"
+                "endpoint. Bring your own model.\n\n"
+                f"Source & docs: {readme_url}"
             ),
+            ok="Open README",
+            cancel="Close",
         )
+        if result == 1:
+            subprocess.run(["open", readme_url], check=False)
 
     # ── Action execution ────────────────────────────────────────────────────
 

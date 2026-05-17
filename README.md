@@ -1,5 +1,10 @@
 # surgebar
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![Platform: macOS](https://img.shields.io/badge/platform-macOS-black.svg)](#)
+[![CI](https://github.com/talvinder/surgebar/actions/workflows/ci.yml/badge.svg)](https://github.com/talvinder/surgebar/actions/workflows/ci.yml)
+
 > Menu bar CPU surge alerts with one-click LLM-powered triage.
 
 surgebar lives in your macOS menu bar. It watches your CPU and load average, fires a notification when things go sideways, and asks an LLM (Claude, GPT-5, a local Llama via Ollama, whatever you prefer) what to do about it — then lets you throttle, quit, or kill the culprit with one click.
