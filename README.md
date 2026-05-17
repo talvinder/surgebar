@@ -1,8 +1,10 @@
 # surgebar
 
-> Menu bar CPU surge alerts with one-click triage powered by Claude.
+> Menu bar CPU surge alerts with one-click LLM-powered triage.
 
-surgebar lives in your macOS menu bar. It watches your CPU and load average, fires a notification when things go sideways, and asks Claude what to do about it — then lets you throttle, quit, or kill the culprit with one click.
+surgebar lives in your macOS menu bar. It watches your CPU and load average, fires a notification when things go sideways, and asks an LLM (Claude, GPT-5, a local Llama via Ollama, whatever you prefer) what to do about it — then lets you throttle, quit, or kill the culprit with one click.
+
+**Bring your own model.** surgebar speaks two protocols: Anthropic Messages and OpenAI Chat Completions. That covers Claude, GPT, Groq, OpenRouter, Together, Mistral, Fireworks, Ollama, LM Studio, vLLM, LiteLLM, and most other LLM endpoints in production.
 
 ```
 🟢 12%  L:1.2    ← all good
@@ -37,11 +39,30 @@ Don't have `pipx`? `brew install pipx && pipx ensurepath`.
 surgebar configure
 ```
 
-This prompts for your Anthropic API key and saves it to **macOS Keychain** (service: `surgebar:anthropic-api-key`). No config files contain the key — only your model preference lives in `~/Library/Application Support/Surgebar/config.json`.
+Picks your provider (Anthropic or OpenAI-compatible), takes your API key, sets the model and base URL. Or skip the CLI — every option is in the menu bar's **Configuration** submenu.
 
-Get a key at https://console.anthropic.com/settings/keys. Default model is `claude-haiku-4-5-20251001` (cheap and fast — a surge diagnose is well under a cent).
+### Provider options
 
-Don't want to use the CLI? Just launch the app — there's a "Set Anthropic API key…" item in the Configuration submenu.
+| Provider | Protocol | Base URL | Get a key |
+|---|---|---|---|
+| Anthropic | Anthropic Messages | `https://api.anthropic.com` | https://console.anthropic.com/settings/keys |
+| OpenAI | OpenAI Chat | `https://api.openai.com` | https://platform.openai.com/api-keys |
+| Groq | OpenAI Chat | `https://api.groq.com/openai` | https://console.groq.com/keys |
+| OpenRouter | OpenAI Chat | `https://openrouter.ai/api` | https://openrouter.ai/keys |
+| Together | OpenAI Chat | `https://api.together.xyz` | https://api.together.xyz/settings/api-keys |
+| Mistral | OpenAI Chat | `https://api.mistral.ai` | https://console.mistral.ai/api-keys/ |
+| Ollama (local) | OpenAI Chat | `http://localhost:11434` | n/a — set any key, e.g. `ollama` |
+| LM Studio (local) | OpenAI Chat | `http://localhost:1234` | n/a |
+| Azure-hosted Anthropic | Anthropic Messages | your Azure URL ending in `/anthropic` | from your Azure portal |
+
+Set the base URL via **Configuration → Set base URL…**. Set the model via **Configuration → Model**, including a "Enter custom model…" option for arbitrary identifiers (e.g. `qwen2.5-coder:7b`, `anthropic/claude-haiku-4.5`, `mistral-large-latest`).
+
+### Where things are stored
+
+| What | Where | Why |
+|---|---|---|
+| API key (per provider) | macOS Keychain, service `surgebar:<provider>-api-key` | secure, survives reinstalls |
+| Provider, model, base URL | `~/Library/Application Support/Surgebar/config.json` | non-sensitive |
 
 ## Run
 
@@ -51,15 +72,17 @@ surgebar
 
 You'll see a 🟢 emoji and live CPU% in your menu bar. To run it on login, see [Auto-start on login](#auto-start-on-login) below.
 
-## Configuration
+## Configuration cheat sheet
 
-| Setting | Where | How to change |
-|---------|-------|---------------|
-| API key | macOS Keychain | `surgebar configure` or Configuration → Set Anthropic API key… |
-| Model | `~/Library/Application Support/Surgebar/config.json` | Configuration → Model → pick one |
-| Thresholds (CPU_WARN/CRIT, poll interval) | code constants in `src/surgebar/app.py` | edit and reinstall (configurable thresholds coming) |
+| Setting | How to change |
+|---------|---------------|
+| Provider | Configuration → Provider → pick one |
+| API key (for selected provider) | Configuration → Set API key… or `surgebar configure` |
+| Base URL | Configuration → Set base URL… |
+| Model | Configuration → Model → pick preset or "Enter custom model…" |
+| Thresholds (CPU_WARN/CRIT, poll interval) | code constants in `src/surgebar/app.py` |
 
-You can also set `ANTHROPIC_API_KEY` as an environment variable — it's used as a fallback when no key is in Keychain.
+Environment-variable fallbacks (used when Keychain is empty): `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`.
 
 ## CLI
 
@@ -89,9 +112,9 @@ rm ~/Library/LaunchAgents/com.surgebar.app.plist
 
 ## How the AI triage works
 
-When CPU surges, surgebar collects: top 5 processes by CPU (with name, PID, CPU%, mem MB, threads, age, parent, cmdline), plus system load, swap %, memory %. It sends that snapshot to Claude with a prompt that says: "return JSON array of 1–3 actions, never recommend killing protected processes, prefer throttle > quit > kill, suggest 'wait' for known transient indexers."
+When CPU surges, surgebar collects: top 5 processes by CPU (with name, PID, CPU%, mem MB, threads, age, parent, cmdline, and a user-recognizable app_name pulled from each process's `.app` bundle), plus system load, swap %, memory %. It sends that snapshot to your configured LLM with a prompt that says: "return JSON array of 1–3 actions, never recommend killing protected processes, prefer throttle > quit > kill, suggest 'wait' for known transient indexers."
 
-Claude's response is then **sanitized**: any action targeting a protected process or a non-existent PID is dropped. Even if the model goes off-script, surgebar won't `kill -9 WindowServer`.
+The LLM's response is then **sanitized**: any action targeting a protected process or a non-existent PID is dropped. Even if the model goes off-script, surgebar won't `kill -9 WindowServer`.
 
 Each suggested action is a menu item with a kind prefix:
 - `↓` throttle (renice 19)
@@ -103,9 +126,10 @@ Clicking opens a confirmation alert with the rationale before doing anything.
 
 ## Security
 
-- API key lives in macOS Keychain, accessed via the `security` CLI. No plaintext on disk.
-- All Anthropic API calls go directly from your Mac to `api.anthropic.com` over TLS. No proxy server. No telemetry.
-- surgebar never sends file contents — only process names, PIDs, CPU%, memory MB, thread counts, parent process, and the first 200 chars of cmdline.
+- API keys live in macOS Keychain (one entry per provider), accessed via the `security` CLI. No plaintext on disk.
+- All LLM API calls go directly from your Mac to your configured base URL over TLS. No proxy server. No telemetry.
+- For privacy-sensitive setups, point surgebar at a local model: `Configuration → Set base URL → http://localhost:11434` (Ollama) or `http://localhost:1234` (LM Studio). No data leaves your machine.
+- surgebar never sends file contents — only process names, PIDs, CPU%, memory MB, thread counts, parent process, the first 200 chars of cmdline, and the matched app's `CFBundleName`.
 
 ## Roadmap
 

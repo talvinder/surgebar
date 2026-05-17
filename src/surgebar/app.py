@@ -15,7 +15,7 @@ import psutil
 import rumps
 
 from . import config
-from .diagnose import call_claude, sanitize_actions
+from .diagnose import call_llm, sanitize_actions
 from .process_naming import display_label, friendly_app_name
 from .signals import (
     CORE_COUNT,
@@ -68,6 +68,8 @@ class SurgebarApp(rumps.App):
             rumps.MenuItem(f"process_slot_{i}", callback=self._make_kill_handler(i))
             for i in range(PROCESS_LIST_SLOTS)
         ]
+        self._provider_menu_items_by_id: dict[str, rumps.MenuItem] = {}
+        self._provider_submenu = self._build_provider_submenu()
         self._model_menu_items_by_id: dict[str, rumps.MenuItem] = {}
         self._model_submenu = self._build_model_submenu()
         self._configuration_submenu = self._build_configuration_submenu()
@@ -109,21 +111,56 @@ class SurgebarApp(rumps.App):
 
     # ── Menu construction ───────────────────────────────────────────────────
 
+    def _build_provider_submenu(self) -> rumps.MenuItem:
+        submenu = rumps.MenuItem("Provider")
+        for provider_id in config.SUPPORTED_PROVIDERS:
+            item = rumps.MenuItem(
+                self._provider_menu_label(provider_id),
+                callback=self._make_provider_picker_handler(provider_id),
+            )
+            self._provider_menu_items_by_id[provider_id] = item
+            submenu.add(item)
+        return submenu
+
+    def _provider_menu_label(self, provider_id: str) -> str:
+        check = "● " if provider_id == self._settings.provider else "○ "
+        return f"{check}{config.PROVIDER_DISPLAY_NAMES[provider_id]}"
+
+    def _refresh_provider_submenu_labels(self) -> None:
+        for provider_id, item in self._provider_menu_items_by_id.items():
+            item.title = self._provider_menu_label(provider_id)
+
     def _build_model_submenu(self) -> rumps.MenuItem:
         submenu = rumps.MenuItem("Model")
-        for model_id in config.SUPPORTED_MODELS:
+        self._populate_model_submenu(submenu)
+        return submenu
+
+    def _populate_model_submenu(self, submenu: rumps.MenuItem) -> None:
+        for key in list(submenu.keys()):
+            del submenu[key]
+        self._model_menu_items_by_id.clear()
+        presets = config.MODEL_PRESETS[self._settings.provider]
+        for model_id in presets:
             item = rumps.MenuItem(
                 self._model_menu_label(model_id),
                 callback=self._make_model_picker_handler(model_id),
             )
             self._model_menu_items_by_id[model_id] = item
             submenu.add(item)
-        return submenu
+        if self._settings.model not in presets:
+            # Show the custom model the user set as already-selected.
+            item = rumps.MenuItem(
+                self._model_menu_label(self._settings.model),
+                callback=self._make_model_picker_handler(self._settings.model),
+            )
+            self._model_menu_items_by_id[self._settings.model] = item
+            submenu.add(item)
+        submenu.add(None)
+        submenu.add(rumps.MenuItem("Enter custom model…", callback=self._on_custom_model_clicked))
 
     def _model_menu_label(self, model_id: str) -> str:
         check = "● " if model_id == self._settings.model else "○ "
-        pretty = model_id.replace("-20251001", "")
-        return f"{check}{pretty}"
+        return f"{check}{model_id}"
 
     def _refresh_model_submenu_labels(self) -> None:
         for model_id, item in self._model_menu_items_by_id.items():
@@ -131,8 +168,10 @@ class SurgebarApp(rumps.App):
 
     def _build_configuration_submenu(self) -> rumps.MenuItem:
         submenu = rumps.MenuItem("Configuration")
-        submenu.add(rumps.MenuItem("Set Anthropic API key…", callback=self._on_set_api_key_clicked))
+        submenu.add(self._provider_submenu)
+        submenu.add(rumps.MenuItem("Set API key…", callback=self._on_set_api_key_clicked))
         submenu.add(rumps.MenuItem("Remove API key", callback=self._on_remove_api_key_clicked))
+        submenu.add(rumps.MenuItem("Set base URL…", callback=self._on_set_base_url_clicked))
         submenu.add(self._model_submenu)
         submenu.add(None)
         submenu.add(rumps.MenuItem("Send test notification", callback=self._on_test_notification_clicked))
@@ -188,11 +227,12 @@ class SurgebarApp(rumps.App):
     ) -> None:
         try:
             assert self._settings.api_key is not None  # diagnose_enabled gate
-            raw = call_claude(
+            raw = call_llm(
                 snapshot,
-                self._settings.api_key,
-                self._settings.base_url,
-                self._settings.model,
+                provider=self._settings.provider,
+                api_key=self._settings.api_key,
+                base_url=self._settings.base_url,
+                model=self._settings.model,
             )
             actions = sanitize_actions(raw, snapshot)
             self._claude_actions = actions
@@ -218,14 +258,15 @@ class SurgebarApp(rumps.App):
     # ── Configuration handlers ──────────────────────────────────────────────
 
     def _on_set_api_key_clicked(self, _: rumps.MenuItem) -> None:
+        provider_display = config.PROVIDER_DISPLAY_NAMES[self._settings.provider]
         existing = "(saved in Keychain)" if self._settings.api_key else ""
         window = rumps.Window(
-            title="Set Anthropic API key",
+            title=f"Set API key — {provider_display}",
             message=(
-                "Paste your Anthropic API key (starts with sk-ant-…).\n\n"
-                "Stored securely in macOS Keychain under service "
-                f"'{config.KEYCHAIN_SERVICE}'.\n\n"
-                "Get a key at https://console.anthropic.com/settings/keys"
+                f"Paste your API key for the currently selected provider ({provider_display}).\n\n"
+                f"Stored securely in macOS Keychain under service "
+                f"'surgebar:{self._settings.provider}-api-key'.\n\n"
+                "Switch providers via Configuration → Provider."
             ),
             default_text=existing,
             ok="Save",
@@ -239,7 +280,7 @@ class SurgebarApp(rumps.App):
         if not api_key or api_key == existing:
             return
         try:
-            config.save_api_key(api_key)
+            config.save_api_key(self._settings.provider, api_key)
         except subprocess.CalledProcessError as error:
             rumps.alert(
                 title="Could not save key",
@@ -252,27 +293,61 @@ class SurgebarApp(rumps.App):
         rumps.notification(
             title="surgebar",
             subtitle="API key saved",
-            message="AI triage is now enabled.",
+            message=f"AI triage enabled via {provider_display}.",
             sound=False,
         )
 
     def _on_remove_api_key_clicked(self, _: rumps.MenuItem) -> None:
         if not self._settings.api_key:
-            rumps.alert(title="No key to remove", message="There's no API key configured.")
+            rumps.alert(title="No key to remove", message="There's no API key configured for the current provider.")
             return
+        provider_display = config.PROVIDER_DISPLAY_NAMES[self._settings.provider]
         if rumps.alert(
-            title="Remove API key?",
-            message="The key will be deleted from macOS Keychain. AI triage will be disabled.",
+            title=f"Remove API key for {provider_display}?",
+            message="The key will be deleted from macOS Keychain. AI triage will be disabled until a new key is set.",
             ok="Remove",
             cancel="Cancel",
         ) != 1:
             return
-        config.clear_api_key()
+        config.clear_api_key(self._settings.provider)
         self._settings = config.load_settings()
         self._claude_actions = []
         self._refresh_action_items()
         self._status_item.title = self._status_text()
         self._sync_diagnose_now_enabled()
+
+    def _on_set_base_url_clicked(self, _: rumps.MenuItem) -> None:
+        window = rumps.Window(
+            title="Set base URL",
+            message=(
+                "Override the API base URL (useful for OpenRouter, Groq, local Ollama, Azure-hosted Anthropic, etc.).\n\n"
+                "Default for Anthropic protocol: https://api.anthropic.com\n"
+                "Default for OpenAI protocol:    https://api.openai.com\n\n"
+                "Don't include /v1/messages or /v1/chat/completions — surgebar appends those."
+            ),
+            default_text=self._settings.base_url,
+            ok="Save",
+            cancel="Cancel",
+            dimensions=(420, 24),
+        )
+        response = window.run()
+        if not response.clicked:
+            return
+        new_url = response.text.strip()
+        if not new_url:
+            return
+        config.save_base_url(new_url)
+        self._settings = config.load_settings()
+
+    def _make_provider_picker_handler(self, provider_id: str):
+        def handler(_: rumps.MenuItem) -> None:
+            config.save_provider(provider_id)
+            self._settings = config.load_settings()
+            self._refresh_provider_submenu_labels()
+            self._populate_model_submenu(self._model_submenu)
+            self._status_item.title = self._status_text()
+            self._sync_diagnose_now_enabled()
+        return handler
 
     def _make_model_picker_handler(self, model_id: str):
         def handler(_: rumps.MenuItem) -> None:
@@ -280,6 +355,29 @@ class SurgebarApp(rumps.App):
             self._settings = config.load_settings()
             self._refresh_model_submenu_labels()
         return handler
+
+    def _on_custom_model_clicked(self, _: rumps.MenuItem) -> None:
+        window = rumps.Window(
+            title="Enter custom model name",
+            message=(
+                "Type any model identifier supported by your selected provider.\n\n"
+                "Examples for OpenAI-compatible:\n"
+                "  • mistral-large-latest\n"
+                "  • llama-3.1-70b-instruct\n"
+                "  • anthropic/claude-sonnet-4.6 (OpenRouter style)\n"
+                "  • qwen2.5-coder:7b (Ollama local)"
+            ),
+            default_text=self._settings.model,
+            ok="Save",
+            cancel="Cancel",
+            dimensions=(360, 24),
+        )
+        response = window.run()
+        if not response.clicked or not response.text.strip():
+            return
+        config.save_model(response.text.strip())
+        self._settings = config.load_settings()
+        self._populate_model_submenu(self._model_submenu)
 
     def _on_reveal_config_clicked(self, _: rumps.MenuItem) -> None:
         config.CONFIG_DIR.mkdir(parents=True, exist_ok=True)
@@ -448,6 +546,23 @@ class SurgebarApp(rumps.App):
         self._refresh_action_items()
 
 
+def _hide_dock_icon() -> None:
+    """Convert the running process to a menu-bar-only "accessory" app.
+
+    Without this, macOS shows the Python interpreter's icon in the Dock and
+    Cmd-Tab switcher because surgebar isn't packaged as a proper .app bundle
+    with LSUIElement=true in Info.plist. Setting NSApplicationActivationPolicyAccessory
+    at runtime achieves the same effect: hidden from Dock and Cmd-Tab, visible
+    only in the menu bar.
+    """
+    try:
+        from AppKit import NSApplication  # type: ignore[import-not-found]
+        NSApplication.sharedApplication().setActivationPolicy_(1)  # 1 = Accessory
+    except ImportError:
+        pass
+
+
 def run_app() -> None:
+    _hide_dock_icon()
     psutil.cpu_percent(interval=1)  # prime the per-process CPU counters
     SurgebarApp().run()
