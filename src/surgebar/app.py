@@ -47,7 +47,7 @@ def _status_dot(cpu_percent: float, load1: float) -> str:
 
 class SurgebarApp(rumps.App):
     def __init__(self) -> None:
-        super().__init__("Surgebar", title="🟢 --")
+        super().__init__("Surgebar", title="🟢 --", quit_button=None)
         self._was_surging_last_tick = False
         self._top_process_pids: list[int | None] = [None] * PROCESS_LIST_SLOTS
 
@@ -135,9 +135,18 @@ class SurgebarApp(rumps.App):
         submenu.add(rumps.MenuItem("Remove API key", callback=self._on_remove_api_key_clicked))
         submenu.add(self._model_submenu)
         submenu.add(None)
+        submenu.add(rumps.MenuItem("Send test notification", callback=self._on_test_notification_clicked))
         submenu.add(rumps.MenuItem("Reveal config in Finder", callback=self._on_reveal_config_clicked))
         submenu.add(rumps.MenuItem("About surgebar", callback=self._on_about_clicked))
         return submenu
+
+    def _on_test_notification_clicked(self, _: rumps.MenuItem) -> None:
+        rumps.notification(
+            title="surgebar — test notification",
+            subtitle="If you see this, the alert path works.",
+            message="Real surge alerts trigger when CPU ≥85% or load-per-core ≥2.0.",
+            sound=True,
+        )
 
     # ── Action rendering ────────────────────────────────────────────────────
 
