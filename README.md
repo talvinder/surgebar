@@ -36,6 +36,7 @@ surgebar is just that loop, automated. It watches your CPU, notices the surge be
 ## Features
 
 - **Surge detection.** Polls every 5s. Notifies on ≥85% CPU or load-per-core ≥2.0.
+- **Configurable alert sound.** Default macOS chime, silent mode, or any of 14 system sounds (Glass, Hero, Submarine, …). Pick from **Configuration → Alert sound**.
 - **AI triage.** Sends top processes + system signals to Claude, gets back 1–3 ranked actions (throttle / quit / kill / info) with rationales.
 - **One-click execution.** `renice 19` for throttle, `SIGTERM` for quit, `SIGKILL` for kill. Every destructive action confirms first.
 - **Top-process kill list.** Six hottest processes always in the menu. Click any one to kill it.
@@ -97,6 +98,7 @@ You'll see a 🟢 emoji and live CPU% in your menu bar. To run it on login, see 
 | API key (for selected provider) | Configuration → Set API key… or `surgebar configure` |
 | Base URL | Configuration → Set base URL… |
 | Model | Configuration → Model → pick preset or "Enter custom model…" |
+| Alert sound | Configuration → Alert sound → Default / Silent / pick a system sound |
 | Thresholds (CPU_WARN/CRIT, poll interval) | code constants in `src/surgebar/app.py` |
 
 Environment-variable fallbacks (used when Keychain is empty): `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`.

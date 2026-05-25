@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 import time
 from typing import Any
@@ -25,10 +26,8 @@ PROTECTED_PROCESSES: frozenset[str] = frozenset({
 def top_processes_by_cpu(limit: int) -> list[dict[str, Any]]:
     procs: list[dict[str, Any]] = []
     for p in psutil.process_iter(["pid", "name", "cpu_percent", "status"]):
-        try:
+        with contextlib.suppress(psutil.NoSuchProcess, psutil.AccessDenied):
             procs.append(p.info)
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            pass
     procs.sort(key=lambda x: x.get("cpu_percent") or 0.0, reverse=True)
     return procs[:limit]
 

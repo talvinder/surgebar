@@ -55,6 +55,16 @@ CONFIG_PATH = CONFIG_DIR / "config.json"
 
 DEFAULT_PROVIDER = PROVIDER_ANTHROPIC
 
+ALERT_SOUND_DEFAULT = "default"
+ALERT_SOUND_SILENT = "silent"
+
+MACOS_SYSTEM_SOUNDS = [
+    "Basso", "Blow", "Bottle", "Frog", "Funk", "Glass", "Hero",
+    "Morse", "Ping", "Pop", "Purr", "Sosumi", "Submarine", "Tink",
+]
+
+ALERT_SOUND_CHOICES = [ALERT_SOUND_DEFAULT, ALERT_SOUND_SILENT, *MACOS_SYSTEM_SOUNDS]
+
 
 @dataclass
 class Settings:
@@ -62,6 +72,7 @@ class Settings:
     api_key: str | None
     base_url: str
     model: str
+    alert_sound: str
 
     @property
     def diagnose_enabled(self) -> bool:
@@ -142,12 +153,16 @@ def load_settings() -> Settings:
     api_key = _keychain_read(provider) or _env_fallback_api_key(provider)
     base_url = file_config.get("base_url") or DEFAULT_BASE_URLS[provider]
     model = file_config.get("model") or DEFAULT_MODELS[provider]
+    alert_sound = file_config.get("alert_sound") or ALERT_SOUND_DEFAULT
+    if alert_sound not in ALERT_SOUND_CHOICES:
+        alert_sound = ALERT_SOUND_DEFAULT
 
     return Settings(
         provider=provider,
         api_key=api_key,
         base_url=base_url.rstrip("/"),
         model=model,
+        alert_sound=alert_sound,
     )
 
 
@@ -180,4 +195,12 @@ def save_base_url(base_url: str) -> None:
 def save_model(model: str) -> None:
     data = _read_config_file()
     data["model"] = model.strip()
+    _write_config_file(data)
+
+
+def save_alert_sound(alert_sound: str) -> None:
+    if alert_sound not in ALERT_SOUND_CHOICES:
+        raise ValueError(f"unknown alert sound: {alert_sound}")
+    data = _read_config_file()
+    data["alert_sound"] = alert_sound
     _write_config_file(data)

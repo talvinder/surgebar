@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.1.0] — Unreleased
 
 ### Added
+- Configurable surge-alert sound. **Configuration → Alert sound** lets you pick "Default", "Silent", or any of the 14 macOS system sounds (Glass, Hero, Ping, Submarine, …). Picking a sound previews it immediately. Persists to `config.json` as `alert_sound`.
 - Menu bar CPU and load monitor with 🟢 / 🟡 / 🔴 status dot.
 - Native macOS notification when CPU surges past 85% or load-per-core past 2.0.
 - Claude-powered triage: top processes sent to the Anthropic API, 1–3 actions returned, sanitized against a protected-process list.

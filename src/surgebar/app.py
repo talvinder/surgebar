@@ -72,27 +72,23 @@ class SurgebarApp(rumps.App):
         self._provider_submenu = self._build_provider_submenu()
         self._model_menu_items_by_id: dict[str, rumps.MenuItem] = {}
         self._model_submenu = self._build_model_submenu()
+        self._alert_sound_menu_items_by_id: dict[str, rumps.MenuItem] = {}
+        self._alert_sound_submenu = self._build_alert_sound_submenu()
         self._configuration_submenu = self._build_configuration_submenu()
 
-        self.menu = (
-            [
-                rumps.MenuItem("── Recommended actions ──", callback=None),
-                self._status_item,
-            ]
-            + self._action_menu_items
-            + [
-                None,
-                self._diagnose_now_item,
-                None,
-                rumps.MenuItem("── Top processes (click to kill) ──", callback=None),
-            ]
-            + self._process_menu_items
-            + [
-                None,
-                self._configuration_submenu,
-                rumps.MenuItem("Quit Surgebar", callback=lambda _: rumps.quit_application()),
-            ]
-        )
+        self.menu = [
+            rumps.MenuItem("── Recommended actions ──", callback=None),
+            self._status_item,
+            *self._action_menu_items,
+            None,
+            self._diagnose_now_item,
+            None,
+            rumps.MenuItem("── Top processes (click to kill) ──", callback=None),
+            *self._process_menu_items,
+            None,
+            self._configuration_submenu,
+            rumps.MenuItem("Quit Surgebar", callback=lambda _: rumps.quit_application()),
+        ]
 
         self._refresh_action_items()
         self._sync_diagnose_now_enabled()
@@ -174,17 +170,83 @@ class SurgebarApp(rumps.App):
         submenu.add(rumps.MenuItem("Set base URL…", callback=self._on_set_base_url_clicked))
         submenu.add(self._model_submenu)
         submenu.add(None)
+        submenu.add(self._alert_sound_submenu)
         submenu.add(rumps.MenuItem("Send test notification", callback=self._on_test_notification_clicked))
         submenu.add(rumps.MenuItem("Reveal config in Finder", callback=self._on_reveal_config_clicked))
         submenu.add(rumps.MenuItem("About surgebar", callback=self._on_about_clicked))
         return submenu
 
+    def _build_alert_sound_submenu(self) -> rumps.MenuItem:
+        submenu = rumps.MenuItem("Alert sound")
+        choices_with_separators: list[str | None] = [
+            config.ALERT_SOUND_DEFAULT,
+            config.ALERT_SOUND_SILENT,
+            None,
+            *config.MACOS_SYSTEM_SOUNDS,
+        ]
+        for choice in choices_with_separators:
+            if choice is None:
+                submenu.add(None)
+                continue
+            item = rumps.MenuItem(
+                self._alert_sound_menu_label(choice),
+                callback=self._make_alert_sound_picker_handler(choice),
+            )
+            self._alert_sound_menu_items_by_id[choice] = item
+            submenu.add(item)
+        return submenu
+
+    def _alert_sound_menu_label(self, choice: str) -> str:
+        check = "● " if choice == self._settings.alert_sound else "○ "
+        display = {
+            config.ALERT_SOUND_DEFAULT: "Default (system notification)",
+            config.ALERT_SOUND_SILENT: "Silent",
+        }.get(choice, choice)
+        return f"{check}{display}"
+
+    def _refresh_alert_sound_submenu_labels(self) -> None:
+        for choice, item in self._alert_sound_menu_items_by_id.items():
+            item.title = self._alert_sound_menu_label(choice)
+
+    def _make_alert_sound_picker_handler(self, choice: str):
+        def handler(_: rumps.MenuItem) -> None:
+            config.save_alert_sound(choice)
+            self._settings = config.load_settings()
+            self._refresh_alert_sound_submenu_labels()
+            self._preview_alert_sound()
+        return handler
+
+    def _preview_alert_sound(self) -> None:
+        if self._settings.alert_sound == config.ALERT_SOUND_SILENT:
+            return
+        if self._settings.alert_sound == config.ALERT_SOUND_DEFAULT:
+            return
+        self._play_system_sound(self._settings.alert_sound)
+
+    def _play_system_sound(self, name: str) -> None:
+        path = f"/System/Library/Sounds/{name}.aiff"
+        if not os.path.exists(path):
+            return
+        subprocess.Popen(
+            ["afplay", path],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
+    def _emit_alert_notification(self, title: str, subtitle: str, message: str) -> None:
+        sound_setting = self._settings.alert_sound
+        if sound_setting == config.ALERT_SOUND_DEFAULT:
+            rumps.notification(title=title, subtitle=subtitle, message=message, sound=True)
+            return
+        rumps.notification(title=title, subtitle=subtitle, message=message, sound=False)
+        if sound_setting != config.ALERT_SOUND_SILENT:
+            self._play_system_sound(sound_setting)
+
     def _on_test_notification_clicked(self, _: rumps.MenuItem) -> None:
-        rumps.notification(
+        self._emit_alert_notification(
             title="surgebar — test notification",
             subtitle="If you see this, the alert path works.",
             message="Real surge alerts trigger when CPU ≥85% or load-per-core ≥2.0.",
-            sound=True,
         )
 
     # ── Action rendering ────────────────────────────────────────────────────
@@ -531,11 +593,10 @@ class SurgebarApp(rumps.App):
                 f"{p['name'][:18]} ({p['cpu_percent']:.0f}%)"
                 for p in snapshot["processes"][:3]
             )
-            rumps.notification(
+            self._emit_alert_notification(
                 title="CPU surge",
                 subtitle=f"CPU {cpu_percent:.0f}%  |  Load {load1:.1f}",
                 message=top_three_summary,
-                sound=True,
             )
             self._maybe_diagnose(snapshot)
         self._was_surging_last_tick = surging_now
