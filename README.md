@@ -42,6 +42,8 @@ surgebar is just that loop, automated. It watches your CPU, notices the surge be
 - **Top-process kill list.** Six hottest processes always in the menu. Click any one to kill it.
 - **Protected processes.** Hard-coded refusal to touch `kernel_task`, `WindowServer`, `Finder`, etc. — no matter what Claude recommends.
 - **Degraded mode.** Works without an API key — you get surge alerts and the kill list, just no AI suggestions.
+- **Never-freeze UI.** All sampling runs on a background thread; the menu only paints precomputed data, so it stays responsive even under the heavy load it's there to catch. If sampling stalls, a watchdog shows "⚠️ stalled" instead of locking up.
+- **CPU sparkline** in the menu bar, a **health status line**, a **Pause monitoring** toggle for noisy builds, and a **Recent surges** log of what's spiked this session.
 
 ## Install
 
@@ -58,6 +60,8 @@ surgebar configure
 ```
 
 Picks your provider (Anthropic or OpenAI-compatible), takes your API key, sets the model and base URL. Or skip the CLI — every option is in the menu bar's **Configuration** submenu.
+
+**The fast path (menu):** open **Configuration → Service** and pick a named service (Groq, OpenRouter, Ollama, Azure-hosted Anthropic, …). That auto-fills the protocol and base URL for you — then just **Set API key…**, pick a **Model**, and hit **Test AI connection…** to confirm it works. The top of the Configuration menu always shows your live state (`AI triage: ● On — Groq · llama-3.3-70b`).
 
 ### Provider options
 
@@ -166,6 +170,27 @@ cd surgebar
 pip install -e ".[dev]"
 python -m surgebar
 ```
+
+## Building a standalone .app (for non-Python users)
+
+The pipx install needs Python. To ship surgebar to someone who doesn't have it,
+build a self-contained `Surgebar.app` with its own bundled Python:
+
+```bash
+pip install -e ".[build]"
+python setup_app.py py2app          # → dist/Surgebar.app
+```
+
+The bundle sets `LSUIElement=true` in its Info.plist, so it runs menu-bar-only
+(no Dock icon) natively — no runtime hacks. To distribute it so it opens cleanly
+on other Macs, sign + notarize + package (requires an Apple Developer ID cert):
+
+```bash
+DEV_ID="Developer ID Application: Your Name (TEAMID)" bash scripts/notarize.sh
+bash scripts/make_dmg.sh            # → dist/Surgebar.dmg
+```
+
+See `scripts/notarize.sh` for the one-time `notarytool store-credentials` step.
 
 ## License
 

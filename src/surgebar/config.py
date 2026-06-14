@@ -50,6 +50,124 @@ MODEL_PRESETS = {
     ],
 }
 
+# ─── Named services ──────────────────────────────────────────────────────────
+# A "service" is what the user actually thinks in terms of: Groq, Azure, Ollama,
+# etc. Each one implies a protocol (provider) and a base URL, so picking a
+# service auto-fills both — no more manual protocol + URL dance. The API key
+# stays keyed by protocol (see _keychain_service_for) so existing keys keep
+# working when you switch between services that share a protocol.
+
+SERVICE_CUSTOM = "custom"
+
+SERVICE_PRESETS: dict[str, dict] = {
+    "anthropic": {
+        "name": "Anthropic",
+        "provider": PROVIDER_ANTHROPIC,
+        "base_url": "https://api.anthropic.com",
+        "models": ["claude-haiku-4-5-20251001", "claude-sonnet-4-6", "claude-opus-4-7"],
+        "needs_url": False,
+        "local": False,
+    },
+    "openai": {
+        "name": "OpenAI",
+        "provider": PROVIDER_OPENAI,
+        "base_url": "https://api.openai.com",
+        "models": ["gpt-5-mini", "gpt-5", "o3-mini"],
+        "needs_url": False,
+        "local": False,
+    },
+    "groq": {
+        "name": "Groq",
+        "provider": PROVIDER_OPENAI,
+        "base_url": "https://api.groq.com/openai",
+        "models": ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"],
+        "needs_url": False,
+        "local": False,
+    },
+    "openrouter": {
+        "name": "OpenRouter",
+        "provider": PROVIDER_OPENAI,
+        "base_url": "https://openrouter.ai/api",
+        "models": ["anthropic/claude-haiku-4.5", "openai/gpt-5-mini"],
+        "needs_url": False,
+        "local": False,
+    },
+    "together": {
+        "name": "Together",
+        "provider": PROVIDER_OPENAI,
+        "base_url": "https://api.together.xyz",
+        "models": ["meta-llama/Llama-3.3-70B-Instruct-Turbo"],
+        "needs_url": False,
+        "local": False,
+    },
+    "mistral": {
+        "name": "Mistral",
+        "provider": PROVIDER_OPENAI,
+        "base_url": "https://api.mistral.ai",
+        "models": ["mistral-large-latest", "mistral-small-latest"],
+        "needs_url": False,
+        "local": False,
+    },
+    "ollama": {
+        "name": "Ollama (local)",
+        "provider": PROVIDER_OPENAI,
+        "base_url": "http://localhost:11434",
+        "models": ["qwen2.5-coder:7b", "llama3.1:8b"],
+        "needs_url": False,
+        "local": True,
+    },
+    "lmstudio": {
+        "name": "LM Studio (local)",
+        "provider": PROVIDER_OPENAI,
+        "base_url": "http://localhost:1234",
+        "models": [],
+        "needs_url": False,
+        "local": True,
+    },
+    "azure_anthropic": {
+        "name": "Azure (Anthropic)",
+        "provider": PROVIDER_ANTHROPIC,
+        "base_url": "",  # per-tenant — prompts for the URL when selected
+        "models": ["claude-sonnet-4-6", "claude-haiku-4-5-20251001"],
+        "needs_url": True,
+        "local": False,
+    },
+    SERVICE_CUSTOM: {
+        "name": "Custom…",
+        "provider": PROVIDER_OPENAI,
+        "base_url": "",
+        "models": [],
+        "needs_url": True,
+        "local": False,
+    },
+}
+
+# Display order in the Service submenu.
+SERVICE_ORDER = [
+    "anthropic", "openai", "groq", "openrouter", "together",
+    "mistral", "ollama", "lmstudio", "azure_anthropic", SERVICE_CUSTOM,
+]
+
+
+def _infer_service(provider: str, base_url: str) -> str:
+    """Back-compat: derive a service id from a pre-services config (provider+base_url)."""
+    normalized = (base_url or "").rstrip("/")
+    for service_id in SERVICE_ORDER:
+        preset = SERVICE_PRESETS[service_id]
+        if preset["needs_url"]:
+            continue
+        if preset["provider"] == provider and preset["base_url"].rstrip("/") == normalized:
+            return service_id
+    # Anthropic protocol on a non-default URL ending in /anthropic == Azure-hosted.
+    if provider == PROVIDER_ANTHROPIC and normalized.endswith("/anthropic"):
+        return "azure_anthropic"
+    return SERVICE_CUSTOM
+
+
+def models_for_service(service_id: str) -> list[str]:
+    preset = SERVICE_PRESETS.get(service_id, SERVICE_PRESETS[SERVICE_CUSTOM])
+    return list(preset["models"])
+
 CONFIG_DIR = Path.home() / "Library" / "Application Support" / "Surgebar"
 CONFIG_PATH = CONFIG_DIR / "config.json"
 
@@ -68,6 +186,7 @@ ALERT_SOUND_CHOICES = [ALERT_SOUND_DEFAULT, ALERT_SOUND_SILENT, *MACOS_SYSTEM_SO
 
 @dataclass
 class Settings:
+    service: str
     provider: str
     api_key: str | None
     base_url: str
@@ -77,6 +196,16 @@ class Settings:
     @property
     def diagnose_enabled(self) -> bool:
         return bool(self.api_key)
+
+    @property
+    def service_name(self) -> str:
+        preset = SERVICE_PRESETS.get(self.service)
+        return preset["name"] if preset else self.service
+
+    @property
+    def needs_base_url(self) -> bool:
+        preset = SERVICE_PRESETS.get(self.service)
+        return bool(preset and preset["needs_url"])
 
 
 def _keychain_service_for(provider: str) -> str:
@@ -150,20 +279,60 @@ def load_settings() -> Settings:
     if provider not in SUPPORTED_PROVIDERS:
         provider = DEFAULT_PROVIDER
 
+    base_url = (file_config.get("base_url") or DEFAULT_BASE_URLS[provider]).rstrip("/")
+
+    # Service: explicit if saved, otherwise inferred from the legacy provider+url.
+    service = file_config.get("service")
+    if service not in SERVICE_PRESETS:
+        service = _infer_service(provider, base_url)
+    # Keep provider consistent with the resolved service (custom keeps its own).
+    if service != SERVICE_CUSTOM:
+        provider = SERVICE_PRESETS[service]["provider"]
+
     api_key = _keychain_read(provider) or _env_fallback_api_key(provider)
-    base_url = file_config.get("base_url") or DEFAULT_BASE_URLS[provider]
     model = file_config.get("model") or DEFAULT_MODELS[provider]
     alert_sound = file_config.get("alert_sound") or ALERT_SOUND_DEFAULT
     if alert_sound not in ALERT_SOUND_CHOICES:
         alert_sound = ALERT_SOUND_DEFAULT
 
     return Settings(
+        service=service,
         provider=provider,
         api_key=api_key,
-        base_url=base_url.rstrip("/"),
+        base_url=base_url,
         model=model,
         alert_sound=alert_sound,
     )
+
+
+def save_service(service_id: str, base_url_override: str | None = None) -> None:
+    """Select a named service: sets protocol, base URL, and default model together."""
+    if service_id not in SERVICE_PRESETS:
+        raise ValueError(f"unknown service: {service_id}")
+    preset = SERVICE_PRESETS[service_id]
+    data = _read_config_file()
+    data["service"] = service_id
+    data["provider"] = preset["provider"]
+    if base_url_override:
+        data["base_url"] = base_url_override.strip().rstrip("/")
+    elif not preset["needs_url"]:
+        data["base_url"] = preset["base_url"]
+    # else: leave existing base_url; caller will prompt for it.
+    models = preset["models"]
+    if models:
+        data["model"] = models[0]
+    _write_config_file(data)
+
+
+def save_custom_service(provider: str, base_url: str) -> None:
+    """Configure the 'Custom…' service with an explicit protocol + base URL."""
+    if provider not in SUPPORTED_PROVIDERS:
+        raise ValueError(f"unknown provider: {provider}")
+    data = _read_config_file()
+    data["service"] = SERVICE_CUSTOM
+    data["provider"] = provider
+    data["base_url"] = base_url.strip().rstrip("/")
+    _write_config_file(data)
 
 
 def save_api_key(provider: str, api_key: str) -> None:

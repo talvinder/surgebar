@@ -12,6 +12,7 @@ No SDK dependency — plain urllib + JSON.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import urllib.error
 import urllib.request
@@ -116,6 +117,35 @@ def call_llm(
         response_text = response_text.split("\n", 1)[1] if "\n" in response_text else response_text
         response_text = response_text.rsplit("```", 1)[0]
     return json.loads(response_text)
+
+
+def ping_llm(provider: str, api_key: str, base_url: str, model: str) -> tuple[bool, str]:
+    """Minimal round-trip to verify the endpoint, key, and model actually work.
+
+    Returns (ok, detail). Used by the menu's "Test AI connection" so the user can
+    confirm AI triage is wired up without waiting for a real surge.
+    """
+    prompt = "Reply with the single word: OK"
+    try:
+        if provider == PROVIDER_ANTHROPIC:
+            text = _call_anthropic(prompt, api_key, base_url, model)
+        elif provider == PROVIDER_OPENAI:
+            text = _call_openai(prompt, api_key, base_url, model)
+        else:
+            return False, f"unknown provider: {provider}"
+    except urllib.error.HTTPError as error:
+        body = ""
+        with contextlib.suppress(Exception):
+            body = error.read().decode()[:160]
+        return False, f"HTTP {error.code}: {body or error.reason}"
+    except urllib.error.URLError as error:
+        return False, f"can't reach {base_url} ({error.reason})"
+    except TimeoutError:
+        return False, f"timed out after {DIAGNOSE_TIMEOUT_SECONDS}s"
+    except Exception as error:  # surface anything else to the user
+        return False, str(error)
+    snippet = (text or "").strip()[:80] or "(empty response)"
+    return True, snippet
 
 
 def sanitize_actions(

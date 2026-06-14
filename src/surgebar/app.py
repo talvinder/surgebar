@@ -1,7 +1,15 @@
-"""Menu bar app — surge detection, notifications, Claude triage, click-to-kill."""
+"""Menu bar app — thin UI over the background Monitor.
+
+The golden rule of this file: the main (UI) thread does NO blocking work. All
+sampling lives in monitor.py on a background thread. The ``update()`` timer here
+only reads the latest precomputed snapshot and paints strings, so the menu stays
+responsive even when the machine is on fire — which is the whole point of a
+surge monitor. The one network call (LLM triage) runs on its own daemon thread.
+"""
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import signal
@@ -9,40 +17,26 @@ import subprocess
 import threading
 import time
 import urllib.error
+from datetime import datetime
 from typing import Any
 
 import psutil
 import rumps
 
 from . import config
-from .diagnose import call_llm, sanitize_actions
-from .process_naming import display_label, friendly_app_name
-from .signals import (
-    CORE_COUNT,
-    PROTECTED_PROCESSES,
-    gather_system_snapshot,
-    top_processes_by_cpu,
-)
+from .diagnose import call_llm, ping_llm, sanitize_actions
+from .monitor import Monitor
+from .process_naming import friendly_app_name
+from .signals import PROTECTED_PROCESSES, gather_system_snapshot
 
-# ─── Thresholds ─────────────────────────────────────────────────────────────
+# ─── Tunables ────────────────────────────────────────────────────────────────
 
-CPU_WARN_PERCENT = 60
-CPU_CRIT_PERCENT = 85
-LOAD_PER_CORE_WARN = 1.0
-LOAD_PER_CORE_CRIT = 2.0
 POLL_INTERVAL_SECONDS = 5
 
 PROCESS_LIST_SLOTS = 6
 ACTION_SLOTS = 3
 DIAGNOSE_REPEAT_SUPPRESSION_SECONDS = 90
-
-
-def _status_dot(cpu_percent: float, load1: float) -> str:
-    if cpu_percent >= CPU_CRIT_PERCENT or load1 / CORE_COUNT >= LOAD_PER_CORE_CRIT:
-        return "🔴"
-    if cpu_percent >= CPU_WARN_PERCENT or load1 / CORE_COUNT >= LOAD_PER_CORE_WARN:
-        return "🟡"
-    return "🟢"
+RECENT_SURGES_SLOTS = 8
 
 
 class SurgebarApp(rumps.App):
@@ -53,13 +47,18 @@ class SurgebarApp(rumps.App):
 
         self._settings = config.load_settings()
 
+        self._monitor = Monitor(poll_interval=POLL_INTERVAL_SECONDS, process_slots=PROCESS_LIST_SLOTS)
+
         self._claude_actions: list[dict[str, Any]] = []
         self._diagnose_in_progress = False
         self._last_diagnose_key: tuple[str, ...] | None = None
         self._last_diagnose_at = 0.0
+        self._last_surge_render_count = -1
 
+        self._health_item = rumps.MenuItem("● Starting…", callback=None)
         self._status_item = rumps.MenuItem(self._status_text(), callback=None)
         self._diagnose_now_item = rumps.MenuItem("Diagnose now", callback=self._on_diagnose_now_clicked)
+        self._pause_item = rumps.MenuItem("Pause monitoring", callback=self._on_toggle_pause_clicked)
         self._action_menu_items = [
             rumps.MenuItem(f"action_slot_{i}", callback=self._make_action_handler(i))
             for i in range(ACTION_SLOTS)
@@ -68,15 +67,23 @@ class SurgebarApp(rumps.App):
             rumps.MenuItem(f"process_slot_{i}", callback=self._make_kill_handler(i))
             for i in range(PROCESS_LIST_SLOTS)
         ]
-        self._provider_menu_items_by_id: dict[str, rumps.MenuItem] = {}
-        self._provider_submenu = self._build_provider_submenu()
+        self._recent_surges_submenu = rumps.MenuItem("Recent surges")
+        self._config_status_item = rumps.MenuItem("…", callback=None)
+        self._service_menu_items_by_id: dict[str, rumps.MenuItem] = {}
+        self._service_submenu = self._build_service_submenu()
         self._model_menu_items_by_id: dict[str, rumps.MenuItem] = {}
         self._model_submenu = self._build_model_submenu()
+        self._apikey_submenu = self._build_apikey_submenu()
+        self._endpoint_item = rumps.MenuItem("Endpoint", callback=self._on_set_base_url_clicked)
         self._alert_sound_menu_items_by_id: dict[str, rumps.MenuItem] = {}
         self._alert_sound_submenu = self._build_alert_sound_submenu()
-        self._configuration_submenu = self._build_configuration_submenu()
+        self._ai_connection_submenu = self._build_ai_connection_submenu()
+        self._alerts_submenu = self._build_alerts_submenu()
+        self._refresh_config_status()
 
         self.menu = [
+            self._health_item,
+            None,
             rumps.MenuItem("── Recommended actions ──", callback=None),
             self._status_item,
             *self._action_menu_items,
@@ -86,18 +93,36 @@ class SurgebarApp(rumps.App):
             rumps.MenuItem("── Top processes (click to kill) ──", callback=None),
             *self._process_menu_items,
             None,
-            self._configuration_submenu,
+            self._recent_surges_submenu,
+            self._pause_item,
+            None,
+            self._ai_connection_submenu,
+            self._alerts_submenu,
+            None,
+            rumps.MenuItem("Reveal config in Finder", callback=self._on_reveal_config_clicked),
+            rumps.MenuItem("About surgebar", callback=self._on_about_clicked),
             rumps.MenuItem("Quit Surgebar", callback=lambda _: rumps.quit_application()),
         ]
 
         self._refresh_action_items()
+        self._refresh_recent_surges_submenu(force=True)
         self._sync_diagnose_now_enabled()
+        self._monitor.start()
+
+        # Custom popover panel. Built defensively: if AppKit setup throws, we keep
+        # the plain native menu and the app is unaffected.
+        try:
+            from .popover import PopoverController
+            self._popover_ctrl = PopoverController.alloc().initWithApp_(self)
+        except Exception:
+            self._popover_ctrl = None
+        self._popover_wired = False
 
     # ── Status helpers ──────────────────────────────────────────────────────
 
     def _status_text(self) -> str:
         if not self._settings.diagnose_enabled:
-            return "Set Anthropic API key to enable AI triage →"
+            return "Set API key to enable AI triage →"
         return "Diagnose: ready"
 
     def _sync_diagnose_now_enabled(self) -> None:
@@ -107,24 +132,116 @@ class SurgebarApp(rumps.App):
 
     # ── Menu construction ───────────────────────────────────────────────────
 
-    def _build_provider_submenu(self) -> rumps.MenuItem:
-        submenu = rumps.MenuItem("Provider")
-        for provider_id in config.SUPPORTED_PROVIDERS:
+    def _build_service_submenu(self) -> rumps.MenuItem:
+        submenu = rumps.MenuItem("Service")
+        for service_id in config.SERVICE_ORDER:
+            if service_id == config.SERVICE_CUSTOM:
+                submenu.add(None)
             item = rumps.MenuItem(
-                self._provider_menu_label(provider_id),
-                callback=self._make_provider_picker_handler(provider_id),
+                self._service_menu_label(service_id),
+                callback=self._make_service_picker_handler(service_id),
             )
-            self._provider_menu_items_by_id[provider_id] = item
+            self._service_menu_items_by_id[service_id] = item
             submenu.add(item)
         return submenu
 
-    def _provider_menu_label(self, provider_id: str) -> str:
-        check = "● " if provider_id == self._settings.provider else "○ "
-        return f"{check}{config.PROVIDER_DISPLAY_NAMES[provider_id]}"
+    def _service_menu_label(self, service_id: str) -> str:
+        check = "● " if service_id == self._settings.service else "○ "
+        return f"{check}{config.SERVICE_PRESETS[service_id]['name']}"
 
-    def _refresh_provider_submenu_labels(self) -> None:
-        for provider_id, item in self._provider_menu_items_by_id.items():
-            item.title = self._provider_menu_label(provider_id)
+    def _refresh_service_submenu_labels(self) -> None:
+        for service_id, item in self._service_menu_items_by_id.items():
+            item.title = self._service_menu_label(service_id)
+
+    def _refresh_config_status(self) -> None:
+        s = self._settings
+        self._config_status_item.title = (
+            "● Connected" if s.diagnose_enabled else "○ Not configured — set an API key"
+        )
+        self._service_submenu.title = f"Service:  {s.service_name}"
+        self._model_submenu.title = f"Model:  {s.model}"
+        self._apikey_submenu.title = f"API key:  {'✓ set' if s.api_key else 'not set'}"
+        self._endpoint_item.title = f"Endpoint:  {s.base_url}"
+
+    def _prompt_base_url(self, service_name: str, default: str = "") -> str | None:
+        window = rumps.Window(
+            title=f"Base URL for {service_name}",
+            message=(
+                "Enter the API base URL for this service.\n\n"
+                "Don't include /v1/messages or /v1/chat/completions — surgebar appends those.\n"
+                "Examples:\n"
+                "  • Azure-hosted Anthropic: https://<resource>.services.ai.azure.com/anthropic\n"
+                "  • Self-hosted vLLM/LiteLLM: http://localhost:8000"
+            ),
+            default_text=default,
+            ok="Save",
+            cancel="Cancel",
+            dimensions=(420, 24),
+        )
+        response = window.run()
+        if not response.clicked:
+            return None
+        return response.text.strip() or None
+
+    def _make_service_picker_handler(self, service_id: str):
+        def handler(_: rumps.MenuItem) -> None:
+            preset = config.SERVICE_PRESETS[service_id]
+            service_name = preset["name"]
+            if service_id == config.SERVICE_CUSTOM:
+                url = self._prompt_base_url("Custom (OpenAI-compatible)", self._settings.base_url)
+                if not url:
+                    return
+                config.save_custom_service(config.PROVIDER_OPENAI, url)
+            elif preset["needs_url"]:
+                default = self._settings.base_url if self._settings.service == service_id else ""
+                url = self._prompt_base_url(service_name, default)
+                if not url:
+                    return
+                config.save_service(service_id, base_url_override=url)
+            else:
+                config.save_service(service_id)
+            self._settings = config.load_settings()
+            self._refresh_service_submenu_labels()
+            self._populate_model_submenu(self._model_submenu)
+            self._refresh_config_status()
+            self._sync_diagnose_now_enabled()
+            # If this protocol has no key yet, walk the user straight into setting one.
+            if not self._settings.api_key:
+                self._on_set_api_key_clicked(None)
+        return handler
+
+    def _on_test_connection_clicked(self, _: rumps.MenuItem) -> None:
+        if not self._settings.diagnose_enabled:
+            rumps.alert(
+                title="No API key set",
+                message="Pick a Service and set an API key first, then test the connection.",
+            )
+            return
+        self._config_status_item.title = "Testing connection…"
+        threading.Thread(target=self._run_test_connection, daemon=True).start()
+
+    def _run_test_connection(self) -> None:
+        ok, detail = ping_llm(
+            provider=self._settings.provider,
+            api_key=self._settings.api_key or "",
+            base_url=self._settings.base_url,
+            model=self._settings.model,
+        )
+        self._refresh_config_status()
+        if ok:
+            rumps.notification(
+                title="surgebar — AI connection OK",
+                subtitle=f"{self._settings.service_name} · {self._settings.model}",
+                message=f"Endpoint replied: {detail}",
+                sound=False,
+            )
+        else:
+            rumps.notification(
+                title="surgebar — AI connection failed",
+                subtitle=f"{self._settings.service_name} · {self._settings.model}",
+                message=detail,
+                sound=False,
+            )
 
     def _build_model_submenu(self) -> rumps.MenuItem:
         submenu = rumps.MenuItem("Model")
@@ -135,7 +252,7 @@ class SurgebarApp(rumps.App):
         for key in list(submenu.keys()):
             del submenu[key]
         self._model_menu_items_by_id.clear()
-        presets = config.MODEL_PRESETS[self._settings.provider]
+        presets = config.models_for_service(self._settings.service)
         for model_id in presets:
             item = rumps.MenuItem(
                 self._model_menu_label(model_id),
@@ -162,18 +279,31 @@ class SurgebarApp(rumps.App):
         for model_id, item in self._model_menu_items_by_id.items():
             item.title = self._model_menu_label(model_id)
 
-    def _build_configuration_submenu(self) -> rumps.MenuItem:
-        submenu = rumps.MenuItem("Configuration")
-        submenu.add(self._provider_submenu)
-        submenu.add(rumps.MenuItem("Set API key…", callback=self._on_set_api_key_clicked))
-        submenu.add(rumps.MenuItem("Remove API key", callback=self._on_remove_api_key_clicked))
-        submenu.add(rumps.MenuItem("Set base URL…", callback=self._on_set_base_url_clicked))
-        submenu.add(self._model_submenu)
+    def _build_ai_connection_submenu(self) -> rumps.MenuItem:
+        # One bounded region for everything about reaching the AI. Each row's
+        # title carries its current value (set in _refresh_config_status), so the
+        # whole setup reads at a glance instead of hiding behind each submenu.
+        submenu = rumps.MenuItem("AI connection")
+        submenu.add(self._config_status_item)
         submenu.add(None)
+        submenu.add(self._service_submenu)
+        submenu.add(self._model_submenu)
+        submenu.add(self._apikey_submenu)
+        submenu.add(self._endpoint_item)
+        submenu.add(None)
+        submenu.add(rumps.MenuItem("Test connection…", callback=self._on_test_connection_clicked))
+        return submenu
+
+    def _build_apikey_submenu(self) -> rumps.MenuItem:
+        submenu = rumps.MenuItem("API key")
+        submenu.add(rumps.MenuItem("Set / replace…", callback=self._on_set_api_key_clicked))
+        submenu.add(rumps.MenuItem("Remove", callback=self._on_remove_api_key_clicked))
+        return submenu
+
+    def _build_alerts_submenu(self) -> rumps.MenuItem:
+        submenu = rumps.MenuItem("Alerts")
         submenu.add(self._alert_sound_submenu)
         submenu.add(rumps.MenuItem("Send test notification", callback=self._on_test_notification_clicked))
-        submenu.add(rumps.MenuItem("Reveal config in Finder", callback=self._on_reveal_config_clicked))
-        submenu.add(rumps.MenuItem("About surgebar", callback=self._on_about_clicked))
         return submenu
 
     def _build_alert_sound_submenu(self) -> rumps.MenuItem:
@@ -249,6 +379,31 @@ class SurgebarApp(rumps.App):
             message="Real surge alerts trigger when CPU ≥85% or load-per-core ≥2.0.",
         )
 
+    # ── Pause control ─────────────────────────────────────────────────────────
+
+    def _on_toggle_pause_clicked(self, _: rumps.MenuItem) -> None:
+        now_paused = not self._monitor.paused
+        self._monitor.set_paused(now_paused)
+        self._pause_item.title = "Resume monitoring" if now_paused else "Pause monitoring"
+        if now_paused:
+            self.title = "⏸ paused"
+
+    # ── Recent surges ─────────────────────────────────────────────────────────
+
+    def _refresh_recent_surges_submenu(self, force: bool = False) -> None:
+        surges = self._monitor.recent_surges()
+        if not force and len(surges) == self._last_surge_render_count:
+            return
+        self._last_surge_render_count = len(surges)
+        for key in list(self._recent_surges_submenu.keys()):
+            del self._recent_surges_submenu[key]
+        if not surges:
+            self._recent_surges_submenu.add(rumps.MenuItem("No surges this session", callback=None))
+            return
+        for event in reversed(list(surges)[-RECENT_SURGES_SLOTS:]):
+            stamp = datetime.fromtimestamp(event.ts).strftime("%H:%M")
+            self._recent_surges_submenu.add(rumps.MenuItem(f"{stamp}  {event.summary}", callback=None))
+
     # ── Action rendering ────────────────────────────────────────────────────
 
     def _refresh_action_items(self) -> None:
@@ -259,18 +414,24 @@ class SurgebarApp(rumps.App):
                 prefix = kind_prefix.get(action.get("kind"), "•")
                 label = (action.get("label") or "?")[:60]
                 item.title = f"  {prefix} {label}"
+                self._set_item_hidden(item, False)
             else:
                 item.title = ""
+                self._set_item_hidden(item, True)  # no blank gap when there are no actions
+
+    def _set_item_hidden(self, item, hidden: bool) -> None:
+        with contextlib.suppress(Exception):
+            item._menuitem.setHidden_(hidden)
 
     # ── Diagnose flow ───────────────────────────────────────────────────────
 
-    def _maybe_diagnose(self, snapshot: dict[str, Any]) -> None:
+    def _maybe_diagnose(self, culprit_signature: tuple[str, ...], force: bool = False) -> None:
         if not self._settings.diagnose_enabled or self._diagnose_in_progress:
             return
-        culprit_signature = tuple(p["name"] for p in snapshot["processes"][:3])
         now = time.time()
         if (
-            culprit_signature == self._last_diagnose_key
+            not force
+            and culprit_signature == self._last_diagnose_key
             and (now - self._last_diagnose_at) < DIAGNOSE_REPEAT_SUPPRESSION_SECONDS
         ):
             return
@@ -278,17 +439,14 @@ class SurgebarApp(rumps.App):
         self._status_item.title = "Diagnose: thinking…"
         threading.Thread(
             target=self._run_diagnose_in_background,
-            args=(snapshot, culprit_signature),
+            args=(culprit_signature,),
             daemon=True,
         ).start()
 
-    def _run_diagnose_in_background(
-        self,
-        snapshot: dict[str, Any],
-        culprit_signature: tuple[str, ...],
-    ) -> None:
+    def _run_diagnose_in_background(self, culprit_signature: tuple[str, ...]) -> None:
         try:
             assert self._settings.api_key is not None  # diagnose_enabled gate
+            snapshot = gather_system_snapshot()  # heavy enrichment — off the UI thread
             raw = call_llm(
                 snapshot,
                 provider=self._settings.provider,
@@ -314,8 +472,9 @@ class SurgebarApp(rumps.App):
             self._diagnose_in_progress = False
 
     def _on_diagnose_now_clicked(self, _: rumps.MenuItem) -> None:
-        self._last_diagnose_key = None
-        self._maybe_diagnose(gather_system_snapshot())
+        snapshot = self._monitor.latest
+        signature = tuple(r.name for r in snapshot.rows[:3]) if snapshot else ()
+        self._maybe_diagnose(signature, force=True)
 
     # ── Configuration handlers ──────────────────────────────────────────────
 
@@ -352,6 +511,7 @@ class SurgebarApp(rumps.App):
         self._settings = config.load_settings()
         self._status_item.title = self._status_text()
         self._sync_diagnose_now_enabled()
+        self._refresh_config_status()
         rumps.notification(
             title="surgebar",
             subtitle="API key saved",
@@ -377,6 +537,7 @@ class SurgebarApp(rumps.App):
         self._refresh_action_items()
         self._status_item.title = self._status_text()
         self._sync_diagnose_now_enabled()
+        self._refresh_config_status()
 
     def _on_set_base_url_clicked(self, _: rumps.MenuItem) -> None:
         window = rumps.Window(
@@ -400,22 +561,14 @@ class SurgebarApp(rumps.App):
             return
         config.save_base_url(new_url)
         self._settings = config.load_settings()
-
-    def _make_provider_picker_handler(self, provider_id: str):
-        def handler(_: rumps.MenuItem) -> None:
-            config.save_provider(provider_id)
-            self._settings = config.load_settings()
-            self._refresh_provider_submenu_labels()
-            self._populate_model_submenu(self._model_submenu)
-            self._status_item.title = self._status_text()
-            self._sync_diagnose_now_enabled()
-        return handler
+        self._refresh_config_status()
 
     def _make_model_picker_handler(self, model_id: str):
         def handler(_: rumps.MenuItem) -> None:
             config.save_model(model_id)
             self._settings = config.load_settings()
             self._refresh_model_submenu_labels()
+            self._refresh_config_status()
         return handler
 
     def _on_custom_model_clicked(self, _: rumps.MenuItem) -> None:
@@ -440,6 +593,7 @@ class SurgebarApp(rumps.App):
         config.save_model(response.text.strip())
         self._settings = config.load_settings()
         self._populate_model_submenu(self._model_submenu)
+        self._refresh_config_status()
 
     def _on_reveal_config_clicked(self, _: rumps.MenuItem) -> None:
         config.CONFIG_DIR.mkdir(parents=True, exist_ok=True)
@@ -575,55 +729,138 @@ class SurgebarApp(rumps.App):
                     rumps.alert(title="Could not kill", message=str(error))
         return handler
 
-    # ── Main loop ───────────────────────────────────────────────────────────
+    # ── Main loop (UI thread — read-only, never blocks) ──────────────────────
 
     @rumps.timer(POLL_INTERVAL_SECONDS)
     def update(self, _: rumps.Timer) -> None:
-        cpu_percent = psutil.cpu_percent(interval=None)
-        load1, _, _ = os.getloadavg()
-        self.title = f"{_status_dot(cpu_percent, load1)} {cpu_percent:.0f}%  L:{load1:.1f}"
+        self._wire_popover_if_ready()
+        # Paused: monitor isn't sampling, so don't render stale data as live.
+        if self._monitor.paused:
+            self.title = "⏸ paused"
+            self._health_item.title = "⏸ Paused — not monitoring"
+            return
 
-        surging_now = (
-            cpu_percent >= CPU_CRIT_PERCENT
-            or load1 / CORE_COUNT >= LOAD_PER_CORE_CRIT
+        # Watchdog: the sampler stalled (system thrashing). Stay honest and stay open.
+        if self._monitor.is_stalled():
+            self.title = "⚠️ stalled"
+            self._health_item.title = "⚠️ Sampling slow — system under heavy load"
+            return
+
+        snapshot = self._monitor.latest
+        if snapshot is None:
+            return  # first sample not in yet
+
+        spark = self._monitor.cpu_sparkline(width=8)
+        self.title = f"{snapshot.dot}{spark} {snapshot.cpu_percent:.0f}%  L:{snapshot.load1:.1f}"
+        self._health_item.title = (
+            f"● Healthy — CPU {snapshot.cpu_percent:.0f}%, load {snapshot.load1:.1f}"
         )
-        if surging_now and not self._was_surging_last_tick:
-            snapshot = gather_system_snapshot()
-            top_three_summary = ", ".join(
-                f"{p['name'][:18]} ({p['cpu_percent']:.0f}%)"
-                for p in snapshot["processes"][:3]
+
+        # Surge edge: fire notification + record history + kick off AI triage.
+        if snapshot.surging and not self._was_surging_last_tick:
+            summary = ", ".join(
+                f"{r.name[:18]} ({r.cpu_percent:.0f}%)" for r in snapshot.rows[:3]
             )
             self._emit_alert_notification(
                 title="CPU surge",
-                subtitle=f"CPU {cpu_percent:.0f}%  |  Load {load1:.1f}",
-                message=top_three_summary,
+                subtitle=f"CPU {snapshot.cpu_percent:.0f}%  |  Load {snapshot.load1:.1f}",
+                message=summary,
             )
-            self._maybe_diagnose(snapshot)
-        self._was_surging_last_tick = surging_now
+            self._monitor.record_surge(summary)
+            self._maybe_diagnose(tuple(r.name for r in snapshot.rows[:3]))
+        self._was_surging_last_tick = snapshot.surging
 
-        top_processes = top_processes_by_cpu(PROCESS_LIST_SLOTS)
+        # Repaint the kill list from precomputed labels (no syscalls here).
         for index, item in enumerate(self._process_menu_items):
-            if index < len(top_processes):
-                proc = top_processes[index]
-                self._top_process_pids[index] = proc["pid"]
-                label = display_label(proc["pid"], proc["name"] or "?")
-                cpu_for_proc = proc.get("cpu_percent") or 0.0
-                item.title = f"  {cpu_for_proc:5.1f}%  {label}"
+            if index < len(snapshot.rows):
+                row = snapshot.rows[index]
+                self._top_process_pids[index] = row.pid
+                item.title = f"  {row.cpu_percent:5.1f}%  {row.label}"
+                self._set_item_hidden(item, False)
             else:
                 self._top_process_pids[index] = None
                 item.title = ""
+                self._set_item_hidden(item, True)
 
         self._refresh_action_items()
+        self._refresh_recent_surges_submenu()
+
+        if self._popover_ctrl is not None:
+            with contextlib.suppress(Exception):
+                self._popover_ctrl.refresh_if_visible()
+
+    # ── Popover wiring + callbacks ────────────────────────────────────────────
+
+    def _wire_popover_if_ready(self) -> None:
+        if self._popover_ctrl is None or self._popover_wired:
+            return
+        try:
+            status_item = getattr(self._nsapp, "nsstatusitem", None)
+            if status_item is not None and self._popover_ctrl.wire_status_item(status_item):
+                self._popover_wired = True
+                print("surgebar: popover armed (left-click = panel, right-click = menu)", flush=True)
+        except Exception:
+            self._popover_ctrl = None  # give up cleanly; native menu stays
+
+    # Data accessors the panel reads:
+    def monitor_snapshot(self):
+        return self._monitor.latest
+
+    def monitor_cpu_values(self) -> list[float]:
+        return self._monitor.cpu_values()
+
+    def actions(self):
+        return list(self._claude_actions[:3])
+
+    def diagnosing(self) -> bool:
+        return self._diagnose_in_progress
+
+    # Button clicks from the panel:
+    def panel_action(self, kind, payload) -> None:
+        if kind == "diagnose":
+            self._on_diagnose_now_clicked(None)
+            if self._popover_ctrl is not None:  # show "Analyzing…" immediately, not on next tick
+                with contextlib.suppress(Exception):
+                    self._popover_ctrl.refresh_if_visible()
+        elif kind == "settings" and self._popover_ctrl is not None:
+            self._popover_ctrl.show_settings_menu()
+        elif kind == "kill" and payload is not None:
+            self._kill_pid(payload)
+        elif kind == "recommend":
+            index = payload if isinstance(payload, int) else 0
+            self._make_action_handler(index)(None)
+
+    def _kill_pid(self, pid: int) -> None:
+        try:
+            name = psutil.Process(pid).name()
+        except psutil.NoSuchProcess:
+            rumps.alert(title="Already gone", message="That process has already exited.")
+            return
+        if name in PROTECTED_PROCESSES:
+            rumps.alert(title="Refused", message=f"{name} is a protected process.")
+            return
+        if rumps.alert(
+            title=f"Kill {name}?",
+            message=f"PID {pid}\n\nThis will forcefully terminate the process.",
+            ok="Kill it",
+            cancel="Cancel",
+        ) == 1:
+            try:
+                os.kill(pid, signal.SIGKILL)
+                rumps.notification(
+                    title="Process killed", subtitle=name,
+                    message=f"PID {pid} terminated.", sound=False,
+                )
+            except (ProcessLookupError, PermissionError) as error:
+                rumps.alert(title="Could not kill", message=str(error))
 
 
 def _hide_dock_icon() -> None:
     """Convert the running process to a menu-bar-only "accessory" app.
 
-    Without this, macOS shows the Python interpreter's icon in the Dock and
-    Cmd-Tab switcher because surgebar isn't packaged as a proper .app bundle
-    with LSUIElement=true in Info.plist. Setting NSApplicationActivationPolicyAccessory
-    at runtime achieves the same effect: hidden from Dock and Cmd-Tab, visible
-    only in the menu bar.
+    Only needed when run as a bare Python script (e.g. ``surgebar`` from pipx).
+    The packaged .app bundle sets LSUIElement=true in its Info.plist instead, so
+    this no-ops harmlessly there.
     """
     try:
         from AppKit import NSApplication  # type: ignore[import-not-found]
@@ -634,5 +871,4 @@ def _hide_dock_icon() -> None:
 
 def run_app() -> None:
     _hide_dock_icon()
-    psutil.cpu_percent(interval=1)  # prime the per-process CPU counters
     SurgebarApp().run()

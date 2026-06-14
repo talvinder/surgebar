@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "surgebar"
-version = "0.1.0"
+version = "0.2.0"
 description = "macOS menu bar CPU surge alerts with one-click triage powered by Claude."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -42,6 +42,9 @@ surgebar = "surgebar.__main__:main"
 dev = [
     "ruff>=0.4",
     "build>=1.2",
+]
+build = [
+    "py2app>=0.28",
 ]
 
 [tool.hatch.build.targets.sdist]
