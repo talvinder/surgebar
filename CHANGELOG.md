@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.2.0] — Unreleased
+## [0.2.0] — 2026-07-12
 
 ### Changed (architecture)
 - **Bulletproof, non-blocking UI.** All sampling — process iteration, `exe()` syscalls, and `Info.plist` disk reads — moved off the UI thread into a dedicated background sampler (`monitor.py`). The menu bar timer now only reads a precomputed, immutable snapshot and paints strings. The menu can no longer freeze when the system is under load, which is exactly when it used to lock up. Root cause of the old freeze: heavy psutil/disk work ran on the rumps main thread during the very surge the app exists to catch.
