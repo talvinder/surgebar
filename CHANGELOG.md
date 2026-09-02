@@ -5,6 +5,47 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0] — 2026-09-03
+
+Rewritten as a native macOS app. The Python implementation is preserved on the
+`python-legacy` branch and in this repository's history.
+
+### Why
+- **The Python version no longer works on macOS 26.** A process without a real
+  `.app` bundle can create an `NSStatusItem` that never appears — no error, no
+  log line. It ran, reported itself healthy, and put nothing in the menu bar.
+  Nothing short of bundling fixes it, so the app is now a bundle.
+
+### Added
+- Native SwiftUI `MenuBarExtra` app: CPU + memory ribbon, CPU history sparkline,
+  kernel memory-pressure signal, and the top processes with plain-English
+  descriptions and per-process actions.
+- Bring-your-own-key AI advice over either the Anthropic Messages or OpenAI Chat
+  Completions protocol; the key lives in the Keychain and is only ever sent to
+  the endpoint you configure. A wrong Service setting now reports the likely
+  protocol mismatch instead of a bare 404.
+- `scripts/build-app.sh` assembles and ad-hoc signs the app bundle;
+  `scripts/install.sh` installs to `/Applications` and starts it at login.
+- CI builds the bundle and asserts it is a signed agent app.
+
+### Changed
+- Per-process sampling now runs only while the panel is open. At rest the app
+  reads two cheap system-wide numbers a second.
+- Actions are `setpriority`/`SIGTERM`/`SIGKILL` with plain-English confirmation;
+  system processes, and surgebar itself, are refused.
+
+### Fixed
+- Panel rendered as a bare header and footer: an unconstrained `ScrollView`
+  reports a zero ideal height and `MenuBarExtra` sizes its window from that, so
+  the CPU summary, process list and every action were laid out into no space.
+- Content drew over the header and footer once AI advice loaded, because sizing
+  the `ScrollView` with `fixedSize` stops it clipping. Its content is measured
+  and given a definite frame instead.
+- An empty Keychain write deleted the stored API key, so a failed read (after
+  the app is re-signed, for instance) destroyed it silently. Empty writes are
+  ignored; removal is explicit.
+- surgebar described itself as "Part of macOS. Best left running."
+
 ## [0.2.0] — 2026-07-12
 
 ### Changed (architecture)

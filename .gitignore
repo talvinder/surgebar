@@ -1,31 +1,8 @@
-__pycache__/
-*.py[cod]
-*$py.class
-
-# Build artifacts
-build/
-dist/
-*.egg-info/
-.eggs/
-wheels/
-pip-wheel-metadata/
-
-# Virtualenvs
-.venv/
-venv/
-env/
-
-# Editors
-.vscode/
-.idea/
-*.swp
+.build/
+.swiftpm/
 .DS_Store
-
-# Ruff / mypy / pytest caches
-.ruff_cache/
-.mypy_cache/
-.pytest_cache/
-
-# Local notes
-TODO.local.md
-.scratch/
+*.xcodeproj
+*.dmg
+dist/
+build/
+__pycache__/
