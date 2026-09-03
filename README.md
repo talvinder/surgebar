@@ -1,196 +1,105 @@
-<p align="center">
-  <img src="src/surgebar/assets/surgebar-256.png" alt="surgebar icon" width="128" height="128"/>
-</p>
-
 <h1 align="center">surgebar</h1>
 
 <p align="center">
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg"></a>
-  <a href="https://www.python.org/downloads/"><img alt="Python 3.11+" src="https://img.shields.io/badge/python-3.11+-blue.svg"></a>
-  <img alt="Platform: macOS" src="https://img.shields.io/badge/platform-macOS-black.svg">
-  <a href="https://github.com/talvinder/surgebar/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/talvinder/surgebar/actions/workflows/ci.yml/badge.svg"></a>
+  <img alt="Platform: macOS 14+" src="https://img.shields.io/badge/platform-macOS%2014%2B-black.svg">
+  <img alt="Swift 5.9" src="https://img.shields.io/badge/swift-5.9-orange.svg">
+  <img alt="Native SwiftUI" src="https://img.shields.io/badge/UI-SwiftUI-blue.svg">
 </p>
 
-> Menu bar CPU surge alerts with one-click LLM-powered triage.
+> A menu bar monitor that tells you, in plain English, what's slowing your Mac down — and lets you fix it in one click.
 
-surgebar lives in your macOS menu bar. It watches your CPU and load average, fires a notification when things go sideways, and asks an LLM (Claude, GPT-5, a local Llama via Ollama, whatever you prefer) what to do about it — then lets you throttle, quit, or kill the culprit with one click.
+<p align="center">
+  <img src="docs/panel.png" alt="The surgebar panel: CPU and memory at a glance, plain-English AI advice, and the processes actually using your Mac" width="380">
+</p>
 
-**Bring your own model.** surgebar speaks two protocols: Anthropic Messages and OpenAI Chat Completions. That covers Claude, GPT, Groq, OpenRouter, Together, Mistral, Fireworks, Ollama, LM Studio, vLLM, LiteLLM, and most other LLM endpoints in production.
+surgebar sits in your menu bar showing live CPU. Click it and you get memory pressure, a CPU history sparkline, and the programs actually working your Mac — each described in a sentence a human can read, not a unix command name. Click any one to slow it down, quit it, or force quit it.
 
-```
-🟢 12%  L:1.2    ← all good
-🟡 67%  L:3.4    ← warning
-🔴 91%  L:8.1    ← notification fires, Claude triages
-```
+Optionally, bring your own AI key and it will read the whole picture and tell you what to do about it.
 
-## Why I built this
+## Why
 
-I work on an M3 Pro with 18GB of RAM — not exactly a slow machine. But the moment I'd open a few Claude Code sessions, spawn some subagents, and start vibe-coding across two or three projects, the fans would spin up and the whole machine would start choking. Every time.
+I work on an M3 Pro with 18GB of RAM. The moment I'd open a few AI coding sessions, spawn some subagents, and start working across two or three projects, the fans would spin up and the machine would start choking.
 
-The frustrating part was figuring out *what* was choking it. The culprit was almost never the LLM session itself. It was a stray `node` process from a dev server I'd forgotten to kill, or an MCP server stuck in a loop, or a Vite watcher fighting another Vite watcher. Activity Monitor showed me a 400% CPU process called `node` with PID 81243 and a 200-char cmdline I couldn't parse at a glance.
+The frustrating part was figuring out *what* was choking it. The culprit was almost never the thing I was working in. It was a stray `node` process from a dev server I'd forgotten to kill, or an MCP server stuck in a loop, or a file sync daemon reindexing the world. Activity Monitor showed me a 400% CPU process called `node` with a 200-character command line I couldn't parse at a glance.
 
-What I actually did, every time: I'd ask the Claude session itself — "find the process eating my CPU, tell me what it is, kill it." Claude would run `ps`, summarize, recommend, I'd hit yes.
+What I actually did, every time: ask an AI session to find the process eating my CPU, tell me what it is, and kill it.
 
-surgebar is just that loop, automated. It watches your CPU, notices the surge before the fans do, sends the top processes to an LLM, gets back a triage plan, and lets you act in one click. Activity Monitor shows you what's hot. surgebar tells you what to do about it.
+surgebar is that loop, made native. Activity Monitor shows you what's hot. surgebar tells you what to do about it.
 
 ## Features
 
-- **Surge detection.** Polls every 5s. Notifies on ≥85% CPU or load-per-core ≥2.0.
-- **Configurable alert sound.** Default macOS chime, silent mode, or any of 14 system sounds (Glass, Hero, Submarine, …). Pick from **Configuration → Alert sound**.
-- **AI triage.** Sends top processes + system signals to Claude, gets back 1–3 ranked actions (throttle / quit / kill / info) with rationales.
-- **One-click execution.** `renice 19` for throttle, `SIGTERM` for quit, `SIGKILL` for kill. Every destructive action confirms first.
-- **Top-process kill list.** Six hottest processes always in the menu. Click any one to kill it.
-- **Protected processes.** Hard-coded refusal to touch `kernel_task`, `WindowServer`, `Finder`, etc. — no matter what Claude recommends.
-- **Degraded mode.** Works without an API key — you get surge alerts and the kill list, just no AI suggestions.
-- **Never-freeze UI.** All sampling runs on a background thread; the menu only paints precomputed data, so it stays responsive even under the heavy load it's there to catch. If sampling stalls, a watchdog shows "⚠️ stalled" instead of locking up.
-- **CPU sparkline** in the menu bar, a **health status line**, a **Pause monitoring** toggle for noisy builds, and a **Recent surges** log of what's spiked this session.
+- **Plain-English process names.** `corespotlightd` becomes "Part of macOS. Best left running." A stray helper becomes "A helper program running in the background — usually part of an app you're using."
+- **One-click actions.** Slow down (renice), quit (SIGTERM), or force quit (SIGKILL). Destructive actions confirm first, and say what will happen in plain words.
+- **Protected processes.** It refuses to touch `kernel_task`, `WindowServer`, `Finder`, `launchd` and friends — no matter what the AI suggests. It also refuses to kill itself.
+- **Bring your own AI.** Speaks both the Anthropic Messages and OpenAI Chat Completions protocols, so it works with Claude, GPT, Groq, OpenRouter, Together, Mistral, Azure AI Foundry, or a local model via Ollama / LM Studio / vLLM.
+- **Your key stays yours.** Stored in the macOS Keychain, never on disk in the clear, and only ever sent to the endpoint you configure. surgebar ships no key of its own.
+- **Works fine without AI.** Without a key you still get live CPU and memory, the process list, and every action. The AI is an opt-in layer, not the product.
+- **Nearly free at rest.** The always-on sampler reads two cheap system-wide numbers a second. The heavier per-process scan runs only while the panel is open — a resource monitor shouldn't be what's using your resources.
+- **Native.** SwiftUI `MenuBarExtra`, SF Symbols, system materials, no Dock icon, no Electron, ~90MB resident.
 
 ## Install
 
-```bash
-pipx install surgebar
-```
-
-Don't have `pipx`? `brew install pipx && pipx ensurepath`.
-
-## First-run setup
+Requires macOS 14 or later and Xcode's command line tools.
 
 ```bash
-surgebar configure
-```
-
-Picks your provider (Anthropic or OpenAI-compatible), takes your API key, sets the model and base URL. Or skip the CLI — every option is in the menu bar's **Configuration** submenu.
-
-**The fast path (menu):** open **Configuration → Service** and pick a named service (Groq, OpenRouter, Ollama, Azure-hosted Anthropic, …). That auto-fills the protocol and base URL for you — then just **Set API key…**, pick a **Model**, and hit **Test AI connection…** to confirm it works. The top of the Configuration menu always shows your live state (`AI triage: ● On — Groq · llama-3.3-70b`).
-
-### Provider options
-
-| Provider | Protocol | Base URL | Get a key |
-|---|---|---|---|
-| Anthropic | Anthropic Messages | `https://api.anthropic.com` | https://console.anthropic.com/settings/keys |
-| OpenAI | OpenAI Chat | `https://api.openai.com` | https://platform.openai.com/api-keys |
-| Groq | OpenAI Chat | `https://api.groq.com/openai` | https://console.groq.com/keys |
-| OpenRouter | OpenAI Chat | `https://openrouter.ai/api` | https://openrouter.ai/keys |
-| Together | OpenAI Chat | `https://api.together.xyz` | https://api.together.xyz/settings/api-keys |
-| Mistral | OpenAI Chat | `https://api.mistral.ai` | https://console.mistral.ai/api-keys/ |
-| Ollama (local) | OpenAI Chat | `http://localhost:11434` | n/a — set any key, e.g. `ollama` |
-| LM Studio (local) | OpenAI Chat | `http://localhost:1234` | n/a |
-| Azure-hosted Anthropic | Anthropic Messages | your Azure URL ending in `/anthropic` | from your Azure portal |
-
-Set the base URL via **Configuration → Set base URL…**. Set the model via **Configuration → Model**, including a "Enter custom model…" option for arbitrary identifiers (e.g. `qwen2.5-coder:7b`, `anthropic/claude-haiku-4.5`, `mistral-large-latest`).
-
-### Where things are stored
-
-| What | Where | Why |
-|---|---|---|
-| API key (per provider) | macOS Keychain, service `surgebar:<provider>-api-key` | secure, survives reinstalls |
-| Provider, model, base URL | `~/Library/Application Support/Surgebar/config.json` | non-sensitive |
-
-## Run
-
-```bash
-surgebar
-```
-
-You'll see a 🟢 emoji and live CPU% in your menu bar. To run it on login, see [Auto-start on login](#auto-start-on-login) below.
-
-## Configuration cheat sheet
-
-| Setting | How to change |
-|---------|---------------|
-| Provider | Configuration → Provider → pick one |
-| API key (for selected provider) | Configuration → Set API key… or `surgebar configure` |
-| Base URL | Configuration → Set base URL… |
-| Model | Configuration → Model → pick preset or "Enter custom model…" |
-| Alert sound | Configuration → Alert sound → Default / Silent / pick a system sound |
-| Thresholds (CPU_WARN/CRIT, poll interval) | code constants in `src/surgebar/app.py` |
-
-Environment-variable fallbacks (used when Keychain is empty): `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`.
-
-## CLI
-
-```
-surgebar              Run the menu bar app
-surgebar configure    Save your Anthropic API key + pick a model
-surgebar status       Show current configuration
-surgebar --version    Print version
-```
-
-## Auto-start on login
-
-surgebar ships a launchd plist template at `scripts/com.surgebar.app.plist`. To install:
-
-```bash
-SURGEBAR_BIN=$(which surgebar)
-sed "s|__SURGEBAR_BIN__|$SURGEBAR_BIN|" scripts/com.surgebar.app.plist \
-  > ~/Library/LaunchAgents/com.surgebar.app.plist
-launchctl load ~/Library/LaunchAgents/com.surgebar.app.plist
-```
-
-To remove:
-```bash
-launchctl unload ~/Library/LaunchAgents/com.surgebar.app.plist
-rm ~/Library/LaunchAgents/com.surgebar.app.plist
-```
-
-## How the AI triage works
-
-When CPU surges, surgebar collects: top 5 processes by CPU (with name, PID, CPU%, mem MB, threads, age, parent, cmdline, and a user-recognizable app_name pulled from each process's `.app` bundle), plus system load, swap %, memory %. It sends that snapshot to your configured LLM with a prompt that says: "return JSON array of 1–3 actions, never recommend killing protected processes, prefer throttle > quit > kill, suggest 'wait' for known transient indexers."
-
-The LLM's response is then **sanitized**: any action targeting a protected process or a non-existent PID is dropped. Even if the model goes off-script, surgebar won't `kill -9 WindowServer`.
-
-Each suggested action is a menu item with a kind prefix:
-- `↓` throttle (renice 19)
-- `⏏` quit (SIGTERM)
-- `✕` kill (SIGKILL)
-- `ⓘ` info (just an explanation, no button)
-
-Clicking opens a confirmation alert with the rationale before doing anything.
-
-## Security
-
-- API keys live in macOS Keychain (one entry per provider), accessed via the `security` CLI. No plaintext on disk.
-- All LLM API calls go directly from your Mac to your configured base URL over TLS. No proxy server. No telemetry.
-- For privacy-sensitive setups, point surgebar at a local model: `Configuration → Set base URL → http://localhost:11434` (Ollama) or `http://localhost:1234` (LM Studio). No data leaves your machine.
-- surgebar never sends file contents — only process names, PIDs, CPU%, memory MB, thread counts, parent process, the first 200 chars of cmdline, and the matched app's `CFBundleName`.
-
-## Roadmap
-
-- [ ] Notarized `.dmg` for non-Python users (paid tier, ~$5)
-- [ ] Configurable thresholds via UI
-- [ ] Pause monitoring (e.g., during builds)
-- [ ] Per-process history / "what's been surging this week"
-- [ ] Optional local LLM backend (Ollama) so AI triage works offline
-
-## Building from source
-
-```bash
-git clone https://github.com/talvinder/surgebar
+git clone https://github.com/talvinder/surgebar.git
 cd surgebar
-pip install -e ".[dev]"
-python -m surgebar
+./scripts/build-app.sh
+./scripts/install.sh
 ```
 
-## Building a standalone .app (for non-Python users)
+`build-app.sh` compiles and assembles `Surgebar.app`. `install.sh` copies it to `/Applications` and registers a launch agent so it starts at login.
 
-The pipx install needs Python. To ship surgebar to someone who doesn't have it,
-build a self-contained `Surgebar.app` with its own bundled Python:
+To uninstall:
 
 ```bash
-pip install -e ".[build]"
-python setup_app.py py2app          # → dist/Surgebar.app
+launchctl bootout gui/$(id -u)/com.talvinder.surgebar
+rm ~/Library/LaunchAgents/com.talvinder.surgebar.plist
+rm -r /Applications/Surgebar.app
 ```
 
-The bundle sets `LSUIElement=true` in its Info.plist, so it runs menu-bar-only
-(no Dock icon) natively — no runtime hacks. To distribute it so it opens cleanly
-on other Macs, sign + notarize + package (requires an Apple Developer ID cert):
+### Turning on AI advice
 
-```bash
-DEV_ID="Developer ID Application: Your Name (TEAMID)" bash scripts/notarize.sh
-bash scripts/make_dmg.sh            # → dist/Surgebar.dmg
-```
+Open the panel → **Settings**, then set:
 
-See `scripts/notarize.sh` for the one-time `notarytool store-credentials` step.
+| Field | For Claude | For OpenAI-compatible |
+|---|---|---|
+| Service | Anthropic (Claude) | OpenAI-compatible |
+| Endpoint | `https://api.anthropic.com` | `https://api.openai.com` |
+| Model | `claude-sonnet-4-6` | `gpt-4o-mini` |
+| API key | your key | your key |
+
+Then hit **Test connection**. The Service setting picks the wire protocol, so it has to match the endpoint — the two use different request paths, and a mismatch is the most common setup mistake. surgebar will tell you if it spots one.
+
+Any OpenAI-compatible gateway works in the second column, including a local model (`http://localhost:11434/v1` for Ollama).
+
+## Two things macOS will bite you on
+
+Worth writing down, because both cost real debugging time and neither fails loudly.
+
+**A bare executable cannot own a menu bar item.** On macOS 26, a process without a proper `.app` bundle — a plain binary, a Python script, anything `swift build` alone produces — can create an `NSStatusItem` that never appears. No error, no log line: the app runs happily and draws nothing. This is why `build-app.sh` exists rather than just `swift build`, and why the bundle needs an `Info.plist` with `LSUIElement`.
+
+**A `ScrollView` has no intrinsic height.** `MenuBarExtra` sizes its window from the content's *ideal* height, and an unconstrained `ScrollView` reports zero — so the panel renders as a header and a footer with nothing between them. `.frame(maxHeight:)` doesn't fix it, because a maximum isn't an ideal. Sizing it with `.fixedSize()` appears to fix it but silently disables clipping, so tall content draws over the header and footer instead. The fix that works is to measure the content and give the `ScrollView` a definite frame.
+
+## How it works
+
+| | |
+|---|---|
+| Menu bar sampler | `host_statistics(HOST_CPU_LOAD_INFO)` for CPU ticks and `host_statistics64(HOST_VM_INFO64)` for memory (active + wired + compressed), once a second |
+| Memory pressure | `DispatchSourceMemoryPressure` — the kernel's own warning/critical signal, event-driven rather than inferred from a threshold |
+| Process scan | `proc_listpids` + `proc_pidinfo(PROC_PIDTASKINFO)`, sampled twice ~600ms apart; the CPU-time delta becomes a live percentage (mach ticks → nanoseconds via `mach_timebase_info`, so one full core reads as 100%) |
+| Naming | `proc_pidpath` → owning `.app` bundle name, with a hand-written table mapping common system daemons to plain descriptions |
+| Actions | `setpriority(PRIO_PROCESS, pid, 19)`, `kill(pid, SIGTERM)`, `kill(pid, SIGKILL)` |
+| AI | your endpoint, your key, over `URLSession`; the prompt carries system metrics plus the top processes and asks for ranked, actionable advice |
+
+Percentages are per-core, matching Activity Monitor — a process using two full cores reads as 200%.
+
+## A note on the Python version
+
+surgebar started as a Python menu bar app (`pipx install surgebar`), which is what earlier tags of this repository contain. **That version no longer works on macOS 26** — it hits the bare-executable problem described above: it runs, reports itself healthy, and puts nothing in your menu bar.
+
+This native Swift rewrite replaces it. The Python implementation remains in history as the reference for what the behaviour should be.
 
 ## License
 
