@@ -109,12 +109,12 @@ MIT — see [LICENSE](LICENSE).
 ## Elsewhere controls
 
 When [Elsewhere](https://github.com/talvinder/elsewhere) is installed, open the
-menu bar panel and select **Elsewhere · capacity, work and permissions**.
+menu bar panel and select **Elsewhere**.
 Surgebar remains a standalone Mac monitor; Elsewhere owns placement and execution.
 
 - **Overview:** live capacity, safe concurrency, provider order and permission status.
-- **Work:** recorded job reasons, placement-review opportunities, recent jobs and reservations. Cancel jobs or release standalone reservations after reviewing the consequence.
-- **Permissions:** inspect approved sources, destinations and limits for the selected working directory. Review changes to ceilings and renewed expiry through Elsewhere's CLI. Inherited or invalid permissions remain read-only. Advanced provider settings open the existing configuration file.
+- **Activity:** timestamped job outcomes, readable failure explanations, placement-review opportunities and reservations. Completed work and removed resources are separate facts. Cancel jobs or release standalone reservations after reviewing the consequence.
+- **Settings:** edit private-source and uncommitted-source permission switches, and inspect approved sources, destinations and limits for the selected working directory. Review changes to ceilings and renewed expiry through Elsewhere's CLI. Inherited or invalid permissions remain read-only. Advanced provider settings open the existing configuration file.
 - **Installation:** executable location and runtime diagnostics. Missing or failed readings are shown explicitly, and a failed refresh keeps the previous snapshot labelled stale.
 
 Refresh runs while the Elsewhere window is active. Opening the window never
@@ -133,3 +133,5 @@ against an installed Elsewhere runtime. This check does not change live permissi
 or dispatch remote work. Verify the actual menu-bar and settings-window interaction
 after approving installation of a candidate. Offscreen rendering is not a substitute
 for the native interaction check.
+
+Failed local jobs use locally classified saved logs when available. Logs are never sent to AI; missing evidence is labelled explicitly. Recent activity is ordered by completion time where available, with absolute local timestamps. Configuration drafts remain unsaved until reviewed, and a changed configuration invalidates the review.

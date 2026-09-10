@@ -10,7 +10,7 @@ set -euo pipefail
 CONFIG="${1:-release}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP="$ROOT/.build/Surgebar.app"
-VERSION="1.1.0"
+VERSION="1.1.1"
 SOURCE_REVISION="$(git -C "$ROOT" rev-parse HEAD)"
 
 echo "==> Building ($CONFIG)"
@@ -33,7 +33,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleIconFile</key><string>surgebar</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>$VERSION</string>
-  <key>CFBundleVersion</key><string>2</string>
+  <key>CFBundleVersion</key><string>3</string>
   <key>SurgebarSourceRevision</key><string>$SOURCE_REVISION</string>
   <key>LSUIElement</key><true/>
   <key>LSMinimumSystemVersion</key><string>14.0</string>

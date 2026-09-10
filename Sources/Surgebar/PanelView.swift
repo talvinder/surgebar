@@ -49,9 +49,17 @@ struct PanelView: View {
                             NSApp.activate(ignoringOtherApps: true)
                             openWindow(id: "elsewhere")
                         } label: {
-                            Label("Elsewhere · capacity, work and permissions", systemImage: "externaldrive.connected.to.line.below")
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }.buttonStyle(.bordered)
+                            HStack(spacing: 8) {
+                                Image(systemName: "externaldrive.connected.to.line.below")
+                                Text("Elsewhere")
+                                Spacer()
+                                Text("Work & settings").foregroundStyle(.secondary)
+                                Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.tertiary)
+                            }
+                            .font(.callout)
+                            .contentShape(Rectangle())
+                            .padding(.vertical, 5)
+                        }.buttonStyle(.plain)
                     }
                     processSection
                     if let toast { toastView(toast) }

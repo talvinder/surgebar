@@ -13,6 +13,7 @@ import SwiftUI
     @Published var executable = ElsewhereClient.discover()
     @Published var advice: String?
     @Published var notice: String?
+    @Published var failureDetails: [String: String] = [:]
     private let discoverOnRefresh: Bool
     init(executable: URL? = ElsewhereClient.discover(), directory: URL = FileManager.default.homeDirectoryForCurrentUser, discoverOnRefresh: Bool = true) {
         self.executable = executable
@@ -50,14 +51,23 @@ import SwiftUI
             queue = q; providers = p; doctor = d
             version = String(data: v, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "Unavailable"
             updated = Date(); error = nil
+            // Local log inspection cannot dispatch compute or send data to AI.
+            for job in q["history"].array.filter({ EWActivity(job: $0).failed && $0["provider"].string == "local" }).prefix(3) {
+                guard let id = job["id"].string, failureDetails[id] == nil else { continue }
+                do {
+                    let log = try await client.json(["job-logs", id])
+                    failureDetails[id] = EWActivity.failureExplanation((job["reason"].string ?? "") + "\n" + (log["stdout"].string ?? "") + "\n" + (log["stderr"].string ?? ""))
+                } catch { failureDetails[id] = "The saved failure detail could not be read. Try checking it again." }
+            }
         } catch { self.error = error.localizedDescription }
     }
     func selectDirectory(_ url: URL) {
         guard !busy else { return }
-        directory = url; queue = .null; providers = .null; doctor = .null; updated = nil; advice = nil; notice = nil; error = nil
+        directory = url; queue = .null; providers = .null; doctor = .null; updated = nil; advice = nil; notice = nil; error = nil; failureDetails = [:]
     }
-    func perform(_ args: [String], expectedConfig: Data? = nil) async {
-        guard !busy, let client else { return }
+    @discardableResult
+    func perform(_ args: [String], expectedConfig: Data? = nil) async -> Bool {
+        guard !busy, let client else { return false }
         busy = true
         notice = nil
         do {
@@ -70,9 +80,22 @@ import SwiftUI
             _ = try await client.json(args)
             error = nil
             notice = "Elsewhere accepted the change."
-        } catch { self.error = error.localizedDescription; busy = false; return }
+        } catch { self.error = error.localizedDescription; busy = false; return false }
         busy = false
         await refresh()
+        return error == nil
+    }
+    var recentJobs: [EWJSON] {
+        queue["history"].array.sorted { (EWActivity(job: $0).timestamp?.date ?? .distantPast) > (EWActivity(job: $1).timestamp?.date ?? .distantPast) }
+    }
+    func inspectFailure(_ job: EWJSON) async {
+        guard !busy, let client, let id = job["id"].string else { return }
+        busy = true
+        defer { busy = false }
+        do {
+            let log = try await client.json(["job-logs", id])
+            failureDetails[id] = EWActivity.failureExplanation((job["reason"].string ?? "") + "\n" + (log["stdout"].string ?? "") + "\n" + (log["stderr"].string ?? ""), state: job["state"].text)
+        } catch { failureDetails[id] = "The saved failure detail could not be read. It may no longer be available." }
     }
     /// Only numeric, fixed-schema telemetry leaves the device for an explicit AI request.
     var aiSummary: String {
