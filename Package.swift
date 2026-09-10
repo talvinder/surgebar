@@ -12,5 +12,6 @@ let package = Package(
             name: "Surgebar",
             path: "Sources/Surgebar"
         ),
+        .testTarget(name: "SurgebarTests", dependencies: ["Surgebar"]),
     ]
 )

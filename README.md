@@ -104,3 +104,32 @@ This native Swift rewrite replaces it. The Python implementation remains in hist
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+
+## Elsewhere controls
+
+When [Elsewhere](https://github.com/talvinder/elsewhere) is installed, open the
+menu bar panel and select **Elsewhere · capacity, work and permissions**.
+Surgebar remains a standalone Mac monitor; Elsewhere owns placement and execution.
+
+- **Overview:** live capacity, safe concurrency, provider order and permission status.
+- **Work:** recorded job reasons, placement-review opportunities, recent jobs and reservations. Cancel jobs or release standalone reservations after reviewing the consequence.
+- **Permissions:** inspect approved sources, destinations and limits for the selected working directory. Review changes to ceilings and renewed expiry through Elsewhere's CLI. Inherited or invalid permissions remain read-only. Advanced provider settings open the existing configuration file.
+- **Installation:** executable location and runtime diagnostics. Missing or failed readings are shown explicitly, and a failed refresh keeps the previous snapshot labelled stale.
+
+Refresh runs while the Elsewhere window is active. Opening the window never
+starts cloud compute. Optional AI explanations send only an allowlisted numeric
+capacity summary to your configured AI; they receive no commands, paths, account
+identifiers, receipts or permission data and cannot act on the machine.
+
+The client supports Elsewhere's JSON `queue`, `providers` and `doctor` commands,
+plus reviewed `trust-approve`, `job-cancel` and `release`. It does not implement
+its own admission rules or migrate existing local jobs automatically.
+
+### Integration validation
+
+Run `swift test --jobs 1`. Set `SURGEBAR_LIVE_READ=1` to opt into read-only checks
+against an installed Elsewhere runtime. This check does not change live permissions
+or dispatch remote work. Verify the actual menu-bar and settings-window interaction
+after approving installation of a candidate. Offscreen rendering is not a substitute
+for the native interaction check.

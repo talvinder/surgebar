@@ -5,6 +5,7 @@ import AppKit
 struct SurgebarApp: App {
     @StateObject private var sampler = Sampler()
     @StateObject private var settings = TriageSettings()
+    @StateObject private var elsewhere = ElsewhereModel()
 
     // No Dock icon / app menu — configured via `LSUIElement` in Info.plist.
     // (Setting the activation policy in `init` traps: NSApp is nil that early.)
@@ -21,6 +22,11 @@ struct SurgebarApp: App {
             Text("\(Int(sampler.snapshot.cpuPercent.rounded()))%")
         }
         .menuBarExtraStyle(.window)
+
+        Window("Elsewhere", id: "elsewhere") {
+            ElsewhereView(model: elsewhere, settings: settings)
+        }
+        .defaultSize(width: 680, height: 700)
 
         Window("surgebar Settings", id: "settings") {
             SettingsView(settings: settings)

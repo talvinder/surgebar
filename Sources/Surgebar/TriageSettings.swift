@@ -13,13 +13,14 @@ final class TriageSettings: ObservableObject {
     // perfectly good key. Use `removeAPIKey()` to clear on purpose.
     @Published var apiKey: String { didSet { KeychainStore.setAPIKey(apiKey) } }
 
-    private let defaults = UserDefaults.standard
+    private let defaults: UserDefaults
 
-    init() {
+    init(defaults: UserDefaults = .standard, readAPIKey: () -> String = KeychainStore.apiKey) {
+        self.defaults = defaults
         provider = TriageConfig.Provider(rawValue: defaults.string(forKey: "provider") ?? "") ?? .openAI
         baseURL = defaults.string(forKey: "baseURL") ?? "https://api.openai.com"
         model = defaults.string(forKey: "model") ?? "gpt-4o-mini"
-        apiKey = KeychainStore.apiKey()
+        apiKey = readAPIKey()
     }
 
     var config: TriageConfig {

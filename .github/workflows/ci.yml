@@ -15,8 +15,8 @@ jobs:
       - name: Show toolchain
         run: swift --version
 
-      - name: Build (debug)
-        run: swift build -c debug
+      - name: Test native integration
+        run: swift test --jobs 1
 
       - name: Build and assemble the app bundle
         run: ./scripts/build-app.sh release
