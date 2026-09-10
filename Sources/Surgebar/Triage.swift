@@ -60,6 +60,18 @@ enum TriageEngine {
         return parse(text, allowedPIDs: Set(processes.filter { !$0.isSystem }.map { $0.id }))
     }
 
+    static func explainElsewhere(summary: String, config: TriageConfig) async throws -> String {
+        guard config.isReady else { throw TriageError.notReady }
+        return try await complete(prompt: """
+        Explain these capacity numbers in two short paragraphs. This is only a numeric snapshot,
+        not a diagnosis of a specific job. Do not claim a specific cause for a waiting job.
+        Elsewhere's local run command does not automatically migrate work to cloud compute.
+        Remote work requires a separate placement request and valid execution permission.
+        Do not suggest shell commands, changing permissions, or taking actions. You have no tools.
+        \(summary)
+        """, config: config)
+    }
+
     /// A tiny round-trip so Settings can confirm the key/endpoint actually work.
     static func test(config: TriageConfig) async -> Result<String, TriageError> {
         guard config.isReady else { return .failure(.notReady) }

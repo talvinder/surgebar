@@ -44,6 +44,15 @@ struct PanelView: View {
                 VStack(alignment: .leading, spacing: 16) {
                     heroAdvice
                     summarySection
+                    if ElsewhereClient.discover() != nil {
+                        Button {
+                            NSApp.activate(ignoringOtherApps: true)
+                            openWindow(id: "elsewhere")
+                        } label: {
+                            Label("Elsewhere · capacity, work and permissions", systemImage: "externaldrive.connected.to.line.below")
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }.buttonStyle(.bordered)
+                    }
                     processSection
                     if let toast { toastView(toast) }
                 }
