@@ -9,3 +9,9 @@ Show the selected working directory, refresh time, executable location, stale/er
 Changes require a concrete review showing their scope. Cancellation and reservation release are separate actions with separate consequences. Permission editing uses Elsewhere's trust commands and explicitly shows renewed expiry, destinations, source roots and limits. Advanced provider configuration opens the selected existing configuration file. Do not invent editable preferences for admission rules that are currently built into Elsewhere.
 
 Poll only while an Elsewhere view is visible, serialize refresh and mutation, bound subprocess runtime/output, preserve the last successful snapshot on errors, and label it stale. Do not install, activate or replace the user's running app during implementation or validation. Prepare candidate provenance, checks and rollback for explicit installation approval.
+
+## Activity and permission refinements
+
+The menu-bar entry is a quiet navigation row rather than a prominent action button. Permission booleans are editable native switches for private and uncommitted source export, with a reviewed save and a clear unsaved state. Computed readiness remains status, not a toggle. A changed configuration invalidates an in-progress review.
+
+Recent jobs are visible without expanding a disclosure. Show an absolute date and local time, labelled by the event it records. Execution outcome and resource cleanup are separate facts: a cleaned job is not necessarily successful. Explain failures using recorded errors and, when requested, locally classified redacted logs. Do not infer a root cause from an exit code alone or send job logs to AI. Missing failure evidence is explicitly unavailable. Job log inspection is read-only and does not start or retry work.
