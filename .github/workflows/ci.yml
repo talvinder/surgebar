@@ -32,3 +32,12 @@ jobs:
           plutil -extract CFBundleIdentifier raw "$APP/Contents/Info.plist"
           codesign --verify --strict "$APP"
           echo "Bundle OK"
+
+      - name: Preserve the exact signed candidate
+        run: ditto -c -k --sequesterRsrc --keepParent .build/Surgebar.app .build/Surgebar.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: surgebar-${{ github.sha }}
+          path: .build/Surgebar.zip
+          retention-days: 7
