@@ -7,9 +7,14 @@ struct ElsewhereView: View {
     @State var tab = "Overview"
     @State private var draft = EWPermissionDraft()
     @State private var pending: Review?
+    @State private var baselineDraft = EWPermissionDraft()
+    @State private var draftTrust: EWJSON = .null
+    @State private var draftConfig: Data?
+    @State private var draftLoaded = false
+    @State private var draftMessage: String?
     @State private var explaining = false
     @Environment(\.scenePhase) private var scenePhase
-    private let tabs = ["Overview", "Work", "Permissions", "Installation"]
+    private let tabs = ["Overview", "Activity", "Settings", "Installation"]
     struct Review: Identifiable {
         let id = UUID()
         let title: String
@@ -20,19 +25,21 @@ struct ElsewhereView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
-                Text("Elsewhere").font(.title2.weight(.semibold))
+                Text("Elsewhere").font(.headline)
                 Spacer()
                 if model.busy { ProgressView().controlSize(.small) }
                 Button("Refresh", systemImage: "arrow.clockwise") { Task { await model.refresh() } }
+                    .labelStyle(.iconOnly).buttonStyle(.borderless)
+                    .help("Refresh Elsewhere").accessibilityLabel("Refresh Elsewhere")
                     .disabled(model.busy || pending != nil)
             }
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("Working directory").font(.caption).foregroundStyle(.secondary)
-                    Text(model.directory.path).font(.callout).textSelection(.enabled)
+                    Text("Scope").font(.caption).foregroundStyle(.secondary)
+                    Text(model.directory.path).font(.callout).lineLimit(1).truncationMode(.middle).help(model.directory.path).textSelection(.enabled)
                 }
                 Spacer()
-                Button("Choose…") { chooseDirectory() }.disabled(model.busy || pending != nil)
+                Button("Change folder…") { chooseDirectory() }.buttonStyle(.borderless).controlSize(.small).disabled(model.busy || pending != nil)
             }
             if let error = model.error {
                 Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
@@ -53,16 +60,20 @@ struct ElsewhereView: View {
             HStack {
                 if let date = model.updated { Text("Last read \(date.formatted(date: .omitted, time: .standard))") }
                 Spacer()
-                Text("Opening this window never starts cloud work")
+                Text("Times shown in " + (TimeZone.current.abbreviation() ?? "local time"))
             }.font(.caption).foregroundStyle(.secondary)
         }
-        .padding(22).frame(minWidth: 620, idealWidth: 680, minHeight: 590, idealHeight: 700)
+        .padding(20).frame(minWidth: 580, idealWidth: 640, minHeight: 560, idealHeight: 660)
         .task(id: scenePhase) {
             guard scenePhase == .active else { return }
             while !Task.isCancelled {
                 if pending == nil { await model.refresh() }
                 do { try await Task.sleep(for: .seconds(10)) } catch { break }
             }
+        }
+        .onChange(of: model.directory) { _, _ in draftLoaded = false; draftConfig = nil; draftMessage = nil }
+        .onChange(of: model.trust) { _, _ in
+            if pending == nil && (!draftLoaded || draft == baselineDraft) { loadDraft() }
         }
         .sheet(item: $pending) { review in
             VStack(alignment: .leading, spacing: 16) {
@@ -73,7 +84,10 @@ struct ElsewhereView: View {
                     Spacer()
                     Button("Confirm change") {
                         pending = nil
-                        Task { await model.perform(review.arguments, expectedConfig: review.config) }
+                        Task {
+                            let saved = await model.perform(review.arguments, expectedConfig: review.config)
+                            if saved && review.config != nil { loadDraft() }
+                        }
                     }.keyboardShortcut(.defaultAction)
                 }
             }.padding(24).frame(width: 550, height: 430)
@@ -81,8 +95,8 @@ struct ElsewhereView: View {
     }
     @ViewBuilder var selectedContent: some View {
         switch tab {
-        case "Work": work
-        case "Permissions": permissions
+        case "Activity": work
+        case "Settings": permissions
         case "Installation": installation
         default: overview
         }
@@ -110,7 +124,7 @@ struct ElsewhereView: View {
                 }.padding(8)
             }
             DisclosureGroup("Why can work wait when memory is available?") {
-                Text("Elsewhere also checks existing reservations, workload concurrency, live paging and the resources requested by the job. Read each job's recorded reason in Work. Capacity ceilings are Elsewhere rules, not Surgebar preferences.").padding(.top, 8)
+                Text("Elsewhere also checks existing reservations, workload concurrency, live paging and the resources requested by the job. Read each job's recorded reason in Activity. Capacity ceilings are Elsewhere rules, not Surgebar preferences.").padding(.top, 8)
             }
             if settings.isConfigured {
                 Button(explaining ? "Explaining…" : "Explain this capacity snapshot with AI", systemImage: "sparkles") {
@@ -152,75 +166,115 @@ struct ElsewhereView: View {
                     }.padding(4)
                 }
             }
-            DisclosureGroup("Recent jobs") {
-                ForEach(Array(model.queue["history"].array.enumerated()), id: \.offset) { _, job in jobRow(job) }
-            }
+            Text("Recent activity").font(.headline)
+            if model.recentJobs.isEmpty { Text("No recent jobs recorded.").foregroundStyle(.secondary) }
+            ForEach(Array(model.recentJobs.enumerated()), id: \.offset) { _, job in jobRow(job) }
             Text("This is the local ledger. Remote lifecycle states are those last recorded by Elsewhere.").font(.caption).foregroundStyle(.secondary)
         }
     }
     private func jobRow(_ job: EWJSON) -> some View {
-        GroupBox {
-            VStack(alignment: .leading, spacing: 8) {
-                row(job["owner"].text, job["state"].text)
-                Text(job["provider"].text + " · " + job["workload"].text).foregroundStyle(.secondary)
-                if let reason = job["reason"].string { Text(reason) }
+        let activity = EWActivity(job: job)
+        return HStack(alignment: .top, spacing: 12) {
+            Image(systemName: activity.symbol)
+                .font(.title3).foregroundStyle(activity.failed ? Color.orange : Color.secondary)
+                .frame(width: 22).padding(.top, 2)
+            VStack(alignment: .leading, spacing: 5) {
+                row(job["owner"].text, activity.title)
+                Text(activity.timestampText).font(.caption).foregroundStyle(.secondary)
+                Text(job["provider"].text + " · " + job["workload"].text).font(.caption).foregroundStyle(.secondary)
+                Text(model.failureDetails[job["id"].text] ?? activity.explanation)
+                    .font(.callout).fixedSize(horizontal: false, vertical: true)
+                if activity.state == "cleaned", job["completed_at"].number != nil {
+                    Text("Time shown is work completion; cleanup time was not recorded.").font(.caption).foregroundStyle(.secondary)
+                }
+                if activity.failed {
+                    Button("Check failure detail") { Task { await model.inspectFailure(job) } }
+                        .buttonStyle(.borderless).controlSize(.small).disabled(model.busy)
+                }
                 if job["can_cancel"].yes, let id = job["id"].string {
                     Button("Cancel job…") {
-                        pending = Review(title: "Cancel this job?", detail: "Owner: \(job["owner"].text)\nProvider: \(job["provider"].text)\nState: \(job["state"].text)\nJob: \(id)\n\nElsewhere will cancel this queued or running job. In-progress work may stop. This does not request result deletion or resource cleanup.", arguments: ["job-cancel", id])
-                    }.disabled(model.busy)
+                        pending = Review(title: "Cancel this job?", detail: "Owner: \(job["owner"].text)\nProvider: \(job["provider"].text)\nState: \(activity.title)\nJob: \(id)\n\nElsewhere will cancel this queued or running job. In-progress work may stop. This does not request result deletion or resource cleanup.", arguments: ["job-cancel", id])
+                    }.buttonStyle(.borderless).controlSize(.small).disabled(model.busy)
                 }
-            }.padding(4)
+                Divider().padding(.top, 8)
+            }
         }
     }
     private var permissions: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Effective execution permission").font(.headline)
-            row("Expires", model.trust["expires_at"].text)
-            row("Private source / uncommitted files", model.trust["source"]["allow_private"].text + " / " + model.trust["source"]["allow_uncommitted"].text)
-            Text("Approved source roots").font(.subheadline)
-            ForEach(model.trust["source"]["allowed_roots"].strings, id: \.self) { Text($0).textSelection(.enabled) }
-            ForEach(model.providers["providers"].object.keys.sorted(), id: \.self) { name in
-                let provider = model.providers["providers"][name]
-                GroupBox(name) {
-                    VStack(spacing: 8) {
-                        row("Readiness", provider["ready"].yes ? "Configured and available locally" : provider["reason"].text)
-                        row("Approved regions", model.trust["providers"][name]["regions"].strings.joined(separator: ", ").nonempty("None"))
-                    }.padding(6)
-                }
+        VStack(alignment: .leading, spacing: 20) {
+            section("Source access") {
+                Toggle(isOn: Binding(get: { draft.allowPrivate ?? model.trust["source"]["allow_private"].yes }, set: { draft.allowPrivate = $0 })) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Allow private repositories")
+                        Text("Permit source from private repositories in the approved folders.").font(.caption).foregroundStyle(.secondary)
+                    }
+                }.toggleStyle(.switch).disabled(model.editableConfig == nil)
+                Toggle(isOn: Binding(get: { draft.allowUncommitted ?? model.trust["source"]["allow_uncommitted"].yes }, set: { draft.allowUncommitted = $0 })) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Allow uncommitted changes")
+                        Text("Include local edits that haven’t been committed yet.").font(.caption).foregroundStyle(.secondary)
+                    }
+                }.toggleStyle(.switch).disabled(model.editableConfig == nil)
+                Text("Approved folders").font(.caption).foregroundStyle(.secondary)
+                ForEach(model.trust["source"]["allowed_roots"].strings, id: \.self) { Text($0).font(.callout).textSelection(.enabled) }
             }
-            Text("Readiness does not prove a new cloud job has run successfully.").font(.caption).foregroundStyle(.secondary)
-            GroupBox("Per-job ceilings") {
-                VStack(spacing: 8) {
+            section("Limits for each job") {
+                if model.editableConfig != nil {
+                    numberField("CPU cores", value: $draft.cpu)
+                    numberField("Memory (MB)", value: $draft.memory)
+                    numberField("Runtime (seconds)", value: $draft.seconds)
+                    HStack { Text("Estimated cost (USD)"); Spacer(); TextField("Cost", value: $draft.cost, format: .number).frame(width: 120) }
+                    numberField("Valid for after saving (days)", value: $draft.days)
+                } else {
                     row("CPU cores", model.trust["limits"]["max_cpu"].text)
-                    row("Memory", model.trust["limits"]["max_memory_mb"].text + " MB")
-                    row("Runtime", model.trust["limits"]["max_runtime_seconds"].text + " seconds")
-                    row("Estimated cost", "$" + model.trust["limits"]["max_estimated_cost_usd"].text)
-                }.padding(6)
+                    row("Memory (MB)", model.trust["limits"]["max_memory_mb"].text)
+                    row("Runtime (seconds)", model.trust["limits"]["max_runtime_seconds"].text)
+                    row("Estimated cost (USD)", model.trust["limits"]["max_estimated_cost_usd"].text)
+                }
+                row("Current expiry", model.trust["expires_at"].text)
             }
             if model.editableConfig != nil {
-                DisclosureGroup("Change ceilings and renew permission") {
-                    VStack(alignment: .leading, spacing: 10) {
-                        numberField("CPU cores", value: $draft.cpu)
-                        numberField("Memory (MB)", value: $draft.memory)
-                        numberField("Runtime (seconds)", value: $draft.seconds)
-                        HStack { Text("Estimated cost (USD)"); Spacer(); TextField("Cost", value: $draft.cost, format: .number).frame(width: 120) }
-                        numberField("New expiry (days from now)", value: $draft.days)
-                        Text("This renews the existing destinations and source permission with new limits. Review the full boundary before confirming.").font(.caption).foregroundStyle(.secondary)
-                        Button("Review permission change…") { reviewPermission() }.disabled(model.busy)
-                    }.padding(.top, 10)
-                }
+                HStack {
+                    Text(draft != baselineDraft ? "Unsaved changes" : "Changes are reviewed before saving").font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Discard") { loadDraft() }.disabled(draft == baselineDraft)
+                    Button("Review changes…") { reviewPermission() }.disabled(model.busy || draft == baselineDraft)
+                }.controlSize(.small)
             } else {
-                Text("Permission editing requires a valid approval stored directly in this configuration file. An inherited or invalid boundary is shown here for inspection; review its owning configuration before changing it.").font(.callout).foregroundStyle(.secondary)
+                Text("These permissions are inherited or aren’t currently valid. Open their owning configuration to change them.").font(.callout).foregroundStyle(.secondary)
             }
-            if let url = model.configURL {
-                Button("Open provider configuration…") { NSWorkspace.shared.open(url) }
-                Text(url.path).font(.caption).textSelection(.enabled)
-                Text("Advanced provider order, regions and storage settings live in this file. Changes may invalidate the approved boundary; refresh after editing.").font(.caption).foregroundStyle(.secondary)
+            if let draftMessage {
+                Text(draftMessage).foregroundStyle(.orange)
+                Button("Reload settings") { loadDraft() }.controlSize(.small)
             }
-        }.onAppear {
-            let l = model.trust["limits"]
-            draft.cpu = Int(l["max_cpu"].number ?? 4); draft.memory = Int(l["max_memory_mb"].number ?? 8192)
-            draft.seconds = Int(l["max_runtime_seconds"].number ?? 3600); draft.cost = l["max_estimated_cost_usd"].number ?? 5
+            section("Providers") {
+                ForEach(model.providers["providers"].object.keys.sorted(), id: \.self) { name in
+                    let provider = model.providers["providers"][name]
+                    row(name.capitalized, provider["ready"].yes ? "Ready" : "Needs attention")
+                    Text(model.trust["providers"][name]["regions"].strings.joined(separator: ", ").nonempty("No approved regions")).font(.caption).foregroundStyle(.secondary)
+                }
+                Text("Readiness is a status check, not a setting. Provider order, regions and storage are in the configuration file.").font(.caption).foregroundStyle(.secondary)
+                if let url = model.configURL {
+                    Button("Advanced configuration…") { NSWorkspace.shared.open(url) }.buttonStyle(.borderless)
+                    Text(url.path).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+                }
+            }
+        }.onAppear { if !draftLoaded { loadDraft() } }
+    }
+    private func loadDraft() {
+        let l = model.trust["limits"]
+        draft = EWPermissionDraft()
+        draft.cpu = Int(l["max_cpu"].number ?? 4); draft.memory = Int(l["max_memory_mb"].number ?? 8192)
+        draft.seconds = Int(l["max_runtime_seconds"].number ?? 3600); draft.cost = l["max_estimated_cost_usd"].number ?? 5
+        draft.allowPrivate = model.trust["source"]["allow_private"].yes
+        draft.allowUncommitted = model.trust["source"]["allow_uncommitted"].yes
+        baselineDraft = draft; draftTrust = model.trust; draftConfig = model.editableConfig
+        draftLoaded = true; draftMessage = nil
+    }
+    private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(title).font(.subheadline.weight(.medium)).foregroundStyle(.secondary)
+            content()
         }
     }
     private var installation: some View {
@@ -240,7 +294,11 @@ struct ElsewhereView: View {
         }
     }
     private func reviewPermission() {
-        guard let config = model.editableConfig, let path = model.configURL?.path else { return }
+        guard let config = draftConfig, let path = model.configURL?.path,
+              draftTrust == model.trust, config == model.editableConfig else {
+            draftMessage = "The configuration changed while you were editing. Reload settings before saving."
+            return
+        }
         do {
             let args = try draft.arguments(path: path, trust: model.trust)
             let destinations = model.trust["providers"].object.keys.sorted().map { name in
@@ -248,8 +306,8 @@ struct ElsewhereView: View {
                 return name + ": " + p["regions"].strings.joined(separator: ", ") + "\n" + p["identity"].object.keys.sorted().map { "  \($0): \(p["identity"][$0].text)" }.joined(separator: "\n")
             }.joined(separator: "\n")
             let storage = model.trust["artifact_store"].object.keys.sorted().map { "\($0): \(model.trust["artifact_store"][$0].text)" }.joined(separator: "\n")
-            pending = Review(title: "Save and renew this permission?", detail: "Configuration: \(path)\n\nDestinations:\n\(destinations)\n\nArtifact storage:\n\(storage)\n\nSource roots:\n\(model.trust["source"]["allowed_roots"].strings.joined(separator: "\n"))\nPrivate: \(model.trust["source"]["allow_private"].text)\nUncommitted: \(model.trust["source"]["allow_uncommitted"].text)\n\nNew ceilings: \(draft.cpu) cores, \(draft.memory) MB, \(draft.seconds) seconds, $\(draft.cost) estimated cost per job.\nNew expiry: \(draft.days) days from confirmation.\n\nElsewhere will save a new permission receipt. No cloud work starts.", arguments: args, config: config)
-        } catch { model.error = error.localizedDescription }
+            pending = Review(title: "Save and renew this permission?", detail: "Configuration: \(path)\n\nDestinations:\n\(destinations)\n\nArtifact storage:\n\(storage)\n\nSource roots:\n\(model.trust["source"]["allowed_roots"].strings.joined(separator: "\n"))\nPrivate repositories: \(model.trust["source"]["allow_private"].text) → \((draft.allowPrivate ?? false) ? "Yes" : "No")\nUncommitted changes: \(model.trust["source"]["allow_uncommitted"].text) → \((draft.allowUncommitted ?? false) ? "Yes" : "No")\n\nNew ceilings: \(draft.cpu) cores, \(draft.memory) MB, \(draft.seconds) seconds, $\(draft.cost) estimated cost per job.\nNew expiry: \(draft.days) days from confirmation.\n\nElsewhere will save a new permission receipt. No cloud work starts.", arguments: args, config: config)
+        } catch { draftMessage = error.localizedDescription }
     }
     private func chooseDirectory() {
         let panel = NSOpenPanel(); panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.allowsMultipleSelection = false

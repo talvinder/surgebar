@@ -103,6 +103,8 @@ struct EWPermissionDraft: Equatable {
     var seconds = 3600
     var cost = 5.0
     var days = 30
+    var allowPrivate: Bool?
+    var allowUncommitted: Bool?
     func arguments(path: String, trust: EWJSON) throws -> [String] {
         let providers = trust["providers"].object.keys.sorted()
         let roots = trust["source"]["allowed_roots"].strings
@@ -112,7 +114,7 @@ struct EWPermissionDraft: Equatable {
         var args = ["trust-approve", "--path", path, "--max-cpu", String(cpu), "--max-memory-mb", String(memory), "--max-runtime-seconds", String(seconds), "--max-estimated-cost-usd", String(cost), "--expires-days", String(days)]
         for provider in providers { args += ["--provider", provider] }
         for root in roots { args += ["--source-root", root] }
-        args += [trust["source"]["allow_private"].yes ? "--allow-private" : "--no-allow-private", trust["source"]["allow_uncommitted"].yes ? "--allow-uncommitted" : "--no-allow-uncommitted"]
+        args += [(allowPrivate ?? trust["source"]["allow_private"].yes) ? "--allow-private" : "--no-allow-private", (allowUncommitted ?? trust["source"]["allow_uncommitted"].yes) ? "--allow-uncommitted" : "--no-allow-uncommitted"]
         return args
     }
 }
